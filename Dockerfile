@@ -1,4 +1,4 @@
-# Use specific version of nvidia cuda image
+# Use specific version of  nvidia cuda image
 # FROM wlsdml1114/my-comfy-models:v1 as model_provider
 # FROM wlsdml1114/multitalk-base:1.7 as runtime
 FROM wlsdml1114/engui_genai-base_blackwell:1.1 as runtime
