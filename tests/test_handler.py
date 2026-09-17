@@ -2,6 +2,7 @@
 
 Run with:  python -m unittest discover -s tests -v
 """
+import base64
 import importlib
 import json
 import os
@@ -144,6 +145,40 @@ class PromptExpansionSettings(unittest.TestCase):
             with self.assertRaises(handler.JobError) as cm:
                 handler.resolve_prompt_expansion({"prompt_expansion": True})
         self.assertIn("No local prompt model", str(cm.exception))
+
+
+class InputStaging(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.input_dir = os.path.join(self.tmp.name, "input")
+        os.makedirs(self.input_dir)
+        p = mock.patch.object(handler, "COMFY_INPUT_DIR", self.input_dir); p.start(); self.addCleanup(p.stop)
+
+    def test_base64_lands_under_comfy_input_and_is_referenced_relatively(self):
+        path = handler.process_input(base64.b64encode(b"jpegbytes").decode(), "task_1", "input_image.jpg", "base64")
+        self.assertEqual(path, os.path.join(self.input_dir, "task_1", "input_image.jpg"))
+        self.assertTrue(os.path.isfile(path))
+        self.assertEqual(handler.comfy_image_ref(path), "task_1/input_image.jpg")
+
+    def test_path_input_is_copied_into_the_input_dir(self):
+        src = os.path.join(self.tmp.name, "on-volume.png")
+        with open(src, "wb") as f:
+            f.write(b"png")
+        path = handler.process_input(src, "task_2", "input_image.jpg", "path")
+        self.assertEqual(handler.comfy_image_ref(path), "task_2/input_image.jpg")
+        with open(path, "rb") as f:
+            self.assertEqual(f.read(), b"png")
+        with self.assertRaises(handler.JobError):
+            handler.process_input(os.path.join(self.tmp.name, "nope.png"), "task_3", "input_image.jpg", "path")
+
+    def test_workflow_nodes_get_input_relative_paths(self):
+        start = handler.process_input(base64.b64encode(b"a").decode(), "task_4", "input_image.jpg", "base64")
+        end = handler.process_input(base64.b64encode(b"b").decode(), "task_4", "end_image.jpg", "base64")
+        g = handler.build_workflow({"prompt": "p"}, start, end)
+        self.assertEqual(g[handler.NODE_START_IMAGE]["inputs"]["image"], "task_4/input_image.jpg")
+        self.assertEqual(g[handler.NODE_END_IMAGE]["inputs"]["image"], "task_4/end_image.jpg")
+        # a file that is not under the input dir is passed through untouched
+        self.assertEqual(handler.comfy_image_ref("/elsewhere/x.png"), "/elsewhere/x.png")
 
 
 class WorkflowBuilding(unittest.TestCase):
@@ -314,7 +349,16 @@ class RunWorkflow(unittest.TestCase):
 class HandlerEndToEnd(unittest.TestCase):
     """Drive handler() with ComfyUI mocked out."""
 
+    def setUp(self):
+        # a real input dir + a real source image so image_path staging works
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(handler, "COMFY_INPUT_DIR", os.path.join(self.tmp.name, "input")); p.start(); self.addCleanup(p.stop)
+        with open(os.path.join(self.tmp.name, "x.jpg"), "wb") as f:
+            f.write(b"jpg")
+
     def _run(self, job_input, texts, videos=None, error=None):
+        if job_input.get("image_path") == "/x.jpg":
+            job_input = dict(job_input, image_path=os.path.join(self.tmp.name, "x.jpg"))
         with mock.patch.object(handler, "wait_for_comfyui", return_value=mock.Mock()), \
              mock.patch.object(handler, "run_workflow", return_value=(videos or {}, texts, error)) as rw, \
              mock.patch.object(handler, "resolve_prompt_expansion", wraps=handler.resolve_prompt_expansion), \
@@ -344,8 +388,10 @@ class HandlerEndToEnd(unittest.TestCase):
         out, _ = self._run({"prompt": "walk", "image_path": "/x.jpg", "prompt_expansion": True},
                            texts={}, error="node 900 (WanVideoPromptGenerator): RuntimeError boom")
         self.assertIn("boom", out["error"])
-        out = handler.handler({"input": {"image_path": "/x.jpg"}})
+        out = handler.handler({"input": {"image_path": os.path.join(self.tmp.name, "x.jpg")}})
         self.assertIn("'prompt' is required", out["error"])
+        out = handler.handler({"input": {"prompt": "p", "image_path": "/does/not/exist.jpg"}})
+        self.assertIn("not found on the worker", out["error"])
 
 
 if __name__ == "__main__":

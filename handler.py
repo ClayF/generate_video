@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.error
 import binascii # Base64 에러 처리를 위해 import
 import subprocess
+import shutil
 import time
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -53,6 +54,11 @@ EXPAND_ONLY_NODES = (NODE_START_IMAGE, NODE_RESIZE_START, NODE_WIDTH, NODE_HEIGH
 # Prompt expansion defaults. All of these can be overridden per request via
 # input.prompt_expansion or per endpoint via environment variables.
 # ---------------------------------------------------------------------------
+# Current ComfyUI refuses LoadImage paths outside its input directory (path
+# traversal hardening in folder_paths.get_annotated_filepath), so every input
+# image is staged under <input dir>/<task_id>/ and referenced relative to it.
+COMFY_INPUT_DIR = os.getenv("COMFY_INPUT_DIR", "/ComfyUI/input")
+DEFAULT_IMAGE = os.getenv("DEFAULT_IMAGE", "/example_image.png")
 LLM_DIR = os.getenv("PROMPT_EXPANSION_LLM_DIR", "/ComfyUI/models/LLM")
 # Second place the node looks (extra_model_paths.yaml lists it too): a Network
 # Volume, which is where entrypoint.sh downloads the model on first start so the
@@ -83,12 +89,34 @@ def to_nearest_multiple_of_16(value):
     if adjusted < 16:
         adjusted = 16
     return adjusted
-def process_input(input_data, temp_dir, output_filename, input_type):
-    """입력 데이터를 처리하여 파일 경로를 반환하는 함수"""
+def task_input_dir(task_id):
+    """Per-job staging folder inside ComfyUI's input directory."""
+    return os.path.join(COMFY_INPUT_DIR, task_id)
+
+
+def comfy_image_ref(path):
+    """What to put in a LoadImage node for a staged file: the path relative to the
+    ComfyUI input directory (required by current ComfyUI). Anything outside it is
+    passed through unchanged for older builds that still accept absolute paths."""
+    path = os.path.abspath(path)
+    root = os.path.abspath(COMFY_INPUT_DIR)
+    if path.startswith(root + os.sep):
+        return os.path.relpath(path, root).replace(os.sep, "/")
+    return path
+
+
+def process_input(input_data, task_id, output_filename, input_type):
+    """입력 데이터를 처리하여 파일 경로를 반환하는 함수 (always a file under the ComfyUI input dir)"""
+    temp_dir = task_input_dir(task_id)
     if input_type == "path":
-        # 경로인 경우 그대로 반환
+        # 경로인 경우: copy into the input dir so ComfyUI's LoadImage will accept it
         logger.info(f"📁 경로 입력 처리: {input_data}")
-        return input_data
+        if not os.path.isfile(input_data):
+            raise JobError(f"image path not found on the worker: {input_data}")
+        os.makedirs(temp_dir, exist_ok=True)
+        file_path = os.path.abspath(os.path.join(temp_dir, output_filename))
+        shutil.copyfile(input_data, file_path)
+        return file_path
     elif input_type == "url":
         # URL인 경우 다운로드
         logger.info(f"🌐 URL 입력 처리: {input_data}")
@@ -436,7 +464,7 @@ def build_workflow(job_input, image_path, end_image_path_local, expansion=None):
     length = job_input.get("length", 81)
     steps = job_input.get("steps", 10)
 
-    prompt[NODE_START_IMAGE]["inputs"]["image"] = image_path
+    prompt[NODE_START_IMAGE]["inputs"]["image"] = comfy_image_ref(image_path)
     prompt["541"]["inputs"]["num_frames"] = length
     prompt[NODE_TEXT_ENCODE]["inputs"]["positive_prompt"] = job_input["prompt"]
     prompt[NODE_TEXT_ENCODE]["inputs"]["negative_prompt"] = job_input.get("negative_prompt", DEFAULT_NEGATIVE_PROMPT)
@@ -468,7 +496,7 @@ def build_workflow(job_input, image_path, end_image_path_local, expansion=None):
 
     # 엔드 이미지가 있는 경우 617번 노드에 경로 적용 (FLF2V 전용)
     if end_image_path_local:
-        prompt[NODE_END_IMAGE]["inputs"]["image"] = end_image_path_local
+        prompt[NODE_END_IMAGE]["inputs"]["image"] = comfy_image_ref(end_image_path_local)
     
     # LoRA 설정 적용 - HIGH LoRA는 노드 279, LOW LoRA는 노드 553
     if lora_count > 0:
@@ -562,8 +590,8 @@ def handler(job):
             image_path = process_input(job_input["image_base64"], task_id, "input_image.jpg", "base64")
         else:
             # 기본값 사용
-            image_path = "/example_image.png"
-            logger.info("기본 이미지 파일을 사용합니다: /example_image.png")
+            image_path = process_input(DEFAULT_IMAGE, task_id, "input_image.png", "path")
+            logger.info(f"기본 이미지 파일을 사용합니다: {DEFAULT_IMAGE}")
 
         # 엔드 이미지 입력 처리 (end_image_path, end_image_url, end_image_base64 중 하나만 사용)
         end_image_path_local = None
@@ -614,6 +642,9 @@ def handler(job):
     except JobError as e:
         logger.error(f"Job failed: {e}")
         return {"error": str(e)}
+    finally:
+        # staged input images are per job; don't let them pile up in ComfyUI/input
+        shutil.rmtree(task_input_dir(task_id), ignore_errors=True)
 
 
 if __name__ == "__main__":
