@@ -321,6 +321,10 @@ def list_local_llm_models(llm_dir=None, extra_dirs=None):
                 lower = f.lower()
                 if not lower.endswith(".gguf") or "mmproj" in lower or "qwen" not in lower:
                     continue
+                if os.path.getsize(os.path.join(root, f)) < 1_000_000:
+                    logger.warning(f"ignoring {f}: {os.path.getsize(os.path.join(root, f))} bytes — "
+                                   "an incomplete download (restart the worker to fetch it again)")
+                    continue
                 names.append(_node_model_name(os.path.join(root, f), models_dir))
     return sorted(set(names), key=str.lower)
 

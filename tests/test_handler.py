@@ -51,7 +51,8 @@ class PromptExpansionSettings(unittest.TestCase):
         self.llm_dir = os.path.join(self.tmp.name, "LLM")
         os.makedirs(self.llm_dir)
         for name in ("Qwen3VL-8B-Instruct-Q8_0.gguf", "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf", "other-model.gguf"):
-            open(os.path.join(self.llm_dir, name), "wb").close()
+            with open(os.path.join(self.llm_dir, name), "wb") as f:
+                f.write(b"\0" * 1_000_000)   # a real model is never tiny; 0-byte leftovers are ignored
         self.node_dir = os.path.join(self.tmp.name, "mm-node")
         os.makedirs(self.node_dir)
         self.patches = [
@@ -89,7 +90,8 @@ class PromptExpansionSettings(unittest.TestCase):
     def test_misnamed_projector_is_healed_at_request_time(self):
         for f in os.listdir(self.llm_dir):
             os.remove(os.path.join(self.llm_dir, f))
-        open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf"), "wb").close()
+        with open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf"), "wb") as f:
+            f.write(b"\0" * 1_000_000)
         open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf"), "wb").close()
         e = handler.resolve_prompt_expansion({"prompt_expansion": True})
         self.assertEqual(e["model"], "Local: LLM/Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf")
@@ -108,8 +110,13 @@ class PromptExpansionSettings(unittest.TestCase):
         e = handler.resolve_prompt_expansion({"prompt_expansion": {"mmproj": "LLM/whatever.gguf"}})
         self.assertEqual(e["mmproj"], "LLM/whatever.gguf")
 
+    def test_zero_byte_model_is_ignored(self):
+        open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf"), "wb").close()   # failed download
+        self.assertEqual(handler.list_local_llm_models(), ["LLM/Qwen3VL-8B-Instruct-Q8_0.gguf"])
+
     def test_default_prefers_the_configured_model_when_several_exist(self):
-        open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf"), "wb").close()
+        with open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf"), "wb") as f:
+            f.write(b"\0" * 1_000_000)
         open(os.path.join(self.llm_dir, "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"), "wb").close()
         # nothing configured: alphabetical (abliterated sorts first, 'qwen3-v' < 'qwen3vl')
         self.assertEqual(handler.default_llm_model(), "Local: LLM/Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf")
@@ -125,7 +132,8 @@ class PromptExpansionSettings(unittest.TestCase):
         vol_root = tempfile.TemporaryDirectory(); self.addCleanup(vol_root.cleanup)
         vol = os.path.join(vol_root.name, "LLM")
         os.makedirs(vol)
-        open(os.path.join(vol, "Qwen3VL-4B-Instruct-Q4_K_M.gguf"), "wb").close()
+        with open(os.path.join(vol, "Qwen3VL-4B-Instruct-Q4_K_M.gguf"), "wb") as f:
+            f.write(b"\0" * 1_000_000)
         with mock.patch.object(handler, "VOLUME_LLM_DIR", vol):
             names = handler.list_local_llm_models()
             self.assertEqual(names, [f"{vol}/Qwen3VL-4B-Instruct-Q4_K_M.gguf", "LLM/Qwen3VL-8B-Instruct-Q8_0.gguf"])
@@ -390,7 +398,8 @@ class HandlerEndToEnd(unittest.TestCase):
         p = mock.patch.object(handler, "COMFY_INPUT_DIR", os.path.join(self.tmp.name, "input")); p.start(); self.addCleanup(p.stop)
         llm_dir = os.path.join(self.tmp.name, "models", "LLM"); os.makedirs(llm_dir)
         for name in ("Qwen3VL-8B-Instruct-Q8_0.gguf", "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf"):
-            open(os.path.join(llm_dir, name), "wb").close()
+            with open(os.path.join(llm_dir, name), "wb") as f:
+                f.write(b"\0" * 1_000_000)
         p = mock.patch.object(handler, "LLM_DIR", llm_dir); p.start(); self.addCleanup(p.stop)
         with open(os.path.join(self.tmp.name, "x.jpg"), "wb") as f:
             f.write(b"jpg")
