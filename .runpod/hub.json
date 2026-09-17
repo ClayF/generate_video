@@ -1,6 +1,6 @@
 {
     "title": "Wan2.2 with LoRA",
-    "description": "Advanced AI model for generating high-quality videos from images with natural motion and realistic animations. you can use at most 3 LoRA pairs",
+    "description": "Wan2.2 image-to-video with up to 4 LoRA pairs and optional on-worker prompt expansion (Qwen3-VL via ComfyUI-MultiModal-Prompt-Nodes).",
     "type": "serverless",
     "category": "video",
     "iconUrl": "https://github.com/wlsdml1114/Engui_Studio/blob/main/assets/logo.png?raw=true",

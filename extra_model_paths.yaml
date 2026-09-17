@@ -15,6 +15,9 @@ comfyui:
         models/unet
         /runpod-volume/models/
     embeddings: models/embeddings/
+    LLM: |
+        models/LLM/
+        /runpod-volume/LLM/
     loras: |
         models/loras/
         /runpod-volume/loras/

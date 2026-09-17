@@ -201,6 +201,64 @@ class GenerateVideoClient:
             logger.error(f"❌ Video save failed: {e}")
             return False
     
+    @staticmethod
+    def expansion_settings(
+        language: str = "zh",
+        model: Optional[str] = None,
+        device: str = "GPU",
+        mmproj: str = "(Auto-detect)",
+        max_retries: int = 3,
+        save_tokens: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Build the prompt_expansion block understood by handler.py.
+
+        Args:
+            language: 'zh' (recommended for Wan2.2), 'en' or 'auto'
+            model: None = the worker's bundled local GGUF; a .gguf filename under
+                   models/LLM; or a DashScope model name such as 'qwen3.7-plus'
+                   (requires DASHSCOPE_API_KEY on the endpoint)
+            device: 'GPU' or 'CPU' for local GGUF models
+            mmproj: mmproj selection for local models ('(Auto-detect)' by default)
+            max_retries: cloud API retry budget (1-10)
+            save_tokens: compress the image before sending it to a cloud model
+        """
+        settings: Dict[str, Any] = {
+            "language": language,
+            "device": device,
+            "mmproj": mmproj,
+            "max_retries": max_retries,
+            "save_tokens": save_tokens,
+        }
+        if model:
+            settings["model"] = model
+        return settings
+
+    def expand_prompt(
+        self,
+        image_path: str,
+        prompt: str,
+        width: int = 480,
+        height: int = 832,
+        prompt_expansion: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Run only the prompt expansion on the worker and return the rewritten
+        prompt (no video is generated). Handy for previewing/editing the prompt
+        before committing GPU time to a full render.
+
+        Returns the job result; on success result['output']['expanded_prompt']
+        holds the text.
+        """
+        return self.create_video_from_image(
+            image_path=image_path,
+            prompt=prompt,
+            width=width,
+            height=height,
+            prompt_expansion=prompt_expansion or self.expansion_settings(),
+            expand_only=True,
+        )
+
     def create_video_from_image(
         self,
         image_path: str,
@@ -213,7 +271,10 @@ class GenerateVideoClient:
         seed: int = 42,
         cfg: float = 2.0,
         context_overlap: int = 48,
-        lora_pairs: Optional[List[Dict[str, Any]]] = None
+        lora_pairs: Optional[List[Dict[str, Any]]] = None,
+        end_image_path: Optional[str] = None,
+        prompt_expansion: Optional[Dict[str, Any]] = None,
+        expand_only: bool = False
     ) -> Dict[str, Any]:
         """
         Generate video from image
@@ -230,9 +291,15 @@ class GenerateVideoClient:
             cfg: CFG scale
             context_overlap: Context overlap
             lora_pairs: LoRA settings list (max 4)
+            end_image_path: Optional end frame (switches to the start+end workflow)
+            prompt_expansion: None to send the prompt as-is, or a dict such as
+                {"language": "zh", "device": "GPU"} (see expansion_settings()) to
+                have the worker rewrite it with the Wan Video Prompt Generator
+            expand_only: Only run the prompt expansion and return the text
         
         Returns:
-            Job result dictionary
+            Job result dictionary. With prompt expansion the output also carries
+            'expanded_prompt' (the text actually sent to Wan2.2).
         """
         # Check file existence
         if not os.path.exists(image_path):
@@ -242,6 +309,14 @@ class GenerateVideoClient:
         image_base64 = self.encode_file_to_base64(image_path)
         if not image_base64:
             return {"error": "Image base64 encoding failed"}
+        
+        end_image_base64 = None
+        if end_image_path:
+            if not os.path.exists(end_image_path):
+                return {"error": f"End image file does not exist: {end_image_path}"}
+            end_image_base64 = self.encode_file_to_base64(end_image_path)
+            if not end_image_base64:
+                return {"error": "End image base64 encoding failed"}
         
         # Process LoRA settings
         if lora_pairs is None:
@@ -270,6 +345,12 @@ class GenerateVideoClient:
         # Add negative_prompt if provided
         if negative_prompt:
             input_data["negative_prompt"] = negative_prompt
+        if end_image_base64:
+            input_data["end_image_base64"] = end_image_base64
+        if prompt_expansion is not None:
+            input_data["prompt_expansion"] = prompt_expansion
+        if expand_only:
+            input_data["expand_only"] = True
         
         # Submit job and wait
         job_id = self.submit_job(input_data)
@@ -434,6 +515,33 @@ def main():
         client.save_video_result(result1, "./output_single.mp4")
     else:
         print(f"Error: {result1.get('error')}")
+    
+    print("\n" + "-"*50 + "\n")
+    
+    # Example 1b: Prompt expansion (Wan Video Prompt Generator runs on the worker)
+    print("1b. Prompt expansion")
+    preview = client.expand_prompt(
+        image_path="./example_image.png",
+        prompt="running man, grab the gun",
+        prompt_expansion=client.expansion_settings(language="zh"),
+    )
+    if preview.get('status') == 'COMPLETED':
+        print("Expanded prompt:", preview['output']['expanded_prompt'])
+    result1b = client.create_video_from_image(
+        image_path="./example_image.png",
+        prompt="running man, grab the gun",
+        width=480,
+        height=832,
+        length=81,
+        seed=42,
+        cfg=2.0,
+        prompt_expansion=client.expansion_settings(language="zh", device="GPU"),
+    )
+    if result1b.get('status') == 'COMPLETED':
+        print("Prompt used for the video:", result1b['output'].get('expanded_prompt'))
+        client.save_video_result(result1b, "./output_expanded.mp4")
+    else:
+        print(f"Error: {result1b.get('error')}")
     
     print("\n" + "-"*50 + "\n")
     

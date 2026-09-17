@@ -3,6 +3,14 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+# Optional: DashScope key for cloud Qwen prompt-expansion models. Local GGUF
+# models (the default) do not need it.
+MM_NODE_DIR=/ComfyUI/custom_nodes/ComfyUI-MultiModal-Prompt-Nodes
+if [ -n "$DASHSCOPE_API_KEY" ] && [ -d "$MM_NODE_DIR" ]; then
+    printf '%s' "$DASHSCOPE_API_KEY" > "$MM_NODE_DIR/api_key.txt"
+    echo "DashScope API key written for prompt expansion."
+fi
+
 # Start ComfyUI in the background
 echo "Starting ComfyUI in the background..."
 python /ComfyUI/main.py --listen --use-sage-attention &

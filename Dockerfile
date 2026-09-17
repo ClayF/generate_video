@@ -53,6 +53,34 @@ RUN cd /ComfyUI/custom_nodes && \
     cd ComfyUI-AdaptiveWindowSize/ComfyUI-AdaptiveWindowSize && \
     mv * ../
 
+# ---------------------------------------------------------------------------
+# Prompt expansion: ComfyUI-MultiModal-Prompt-Nodes (Wan Video Prompt Generator)
+# + llama-cpp-python with CUDA so the Qwen3-VL GGUF runs on the worker GPU.
+# The JamePeng fork ships prebuilt cu128 wheels for Python 3.10-3.14; the tag is
+# picked from the base image's interpreter at build time.
+# ---------------------------------------------------------------------------
+ARG LLAMA_CPP_PYTHON_RELEASE=v0.3.49-cu128-linux-20260831
+ARG LLAMA_CPP_PYTHON_WHEEL_VERSION=0.3.49%2Bcu128
+RUN cd /ComfyUI/custom_nodes && \
+    git clone https://github.com/kantan-kanto/ComfyUI-MultiModal-Prompt-Nodes && \
+    pip install dashscope pillow numpy
+RUN PYTAG=$(python -c 'import sys; print("cp%d%d" % sys.version_info[:2])') && \
+    pip install "https://github.com/JamePeng/llama-cpp-python/releases/download/${LLAMA_CPP_PYTHON_RELEASE}/llama_cpp_python-${LLAMA_CPP_PYTHON_WHEEL_VERSION}-${PYTAG}-${PYTAG}-linux_x86_64.whl" && \
+    python -c "import llama_cpp; print('llama-cpp-python', llama_cpp.__version__)"
+
+# Local vision LLM for prompt expansion (model + matching mmproj must sit in the
+# same folder; the filename must start with a family prefix such as Qwen3VL so
+# the node's mmproj auto-detect works). Override with --build-arg to use a
+# smaller quant or a different Qwen family.
+ARG PROMPT_LLM_URL=https://huggingface.co/ggml-org/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf
+ARG PROMPT_MMPROJ_URL=https://huggingface.co/ggml-org/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+RUN mkdir -p /ComfyUI/models/LLM && \
+    wget -q "${PROMPT_LLM_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_LLM_URL}")" && \
+    wget -q "${PROMPT_MMPROJ_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_MMPROJ_URL}")"
+
+# Tiny output node that publishes the expanded prompt to the job history
+COPY custom_nodes/generate_video_prompt_nodes /ComfyUI/custom_nodes/generate_video_prompt_nodes
+
 RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/I2V/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors -O /ComfyUI/models/diffusion_models/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors
 RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/I2V/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors -O /ComfyUI/models/diffusion_models/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors
 
