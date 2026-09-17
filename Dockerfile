@@ -10,7 +10,8 @@ RUN pip install -U "huggingface_hub[hf_transfer,hf_xet]" && \
     (apt-get update && apt-get install -y --no-install-recommends aria2 && rm -rf /var/lib/apt/lists/*) \
     || echo "aria2 not installed (apt unavailable); hfget will use the hub client / wget"
 COPY hfget.sh /usr/local/bin/hfget
-RUN chmod +x /usr/local/bin/hfget
+COPY mmproj-name.sh /usr/local/bin/mmproj-name
+RUN chmod +x /usr/local/bin/hfget /usr/local/bin/mmproj-name
 RUN pip install runpod websocket-client
 
 WORKDIR /
@@ -75,19 +76,25 @@ RUN PYTAG=$(python -c 'import sys; print("cp%d%d" % sys.version_info[:2])') && \
     pip install "https://github.com/JamePeng/llama-cpp-python/releases/download/${LLAMA_CPP_PYTHON_RELEASE}/llama_cpp_python-${LLAMA_CPP_PYTHON_WHEEL_VERSION}-${PYTAG}-${PYTAG}-linux_x86_64.whl" && \
     python -c "import llama_cpp; print('llama-cpp-python', llama_cpp.__version__)"
 
-# Local vision LLM for prompt expansion (Qwen3-VL-8B-Instruct Q8_0 + mmproj,
-# ~9.4 GB). It is NOT baked into the image by default because the download
+# Local vision LLM for prompt expansion: Qwen3-VL-8B-Instruct **abliterated v2**
+# (prithivMLmods) Q8_0 + mmproj, ~9.4 GB. Refusal-free, so it will describe any
+# frame; swap PROMPT_LLM_URL/PROMPT_MMPROJ_URL for the stock model if preferred:
+#   https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf
+#   https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+# It is NOT baked into the image by default because the download
 # pushes RunPod's build past its time limit; entrypoint.sh fetches it into
 # /runpod-volume/LLM on the first start instead (see PROMPT_LLM_URL below).
 # To bake it in anyway (own registry, no build timeout):
 #   --build-arg BAKE_PROMPT_LLM=1
 ARG BAKE_PROMPT_LLM=0
-ENV PROMPT_LLM_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf \
-    PROMPT_MMPROJ_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+ENV PROMPT_LLM_URL=https://huggingface.co/prithivMLmods/Qwen3-VL-8B-Instruct-abliterated-v2-GGUF/resolve/main/Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf \
+    PROMPT_MMPROJ_URL=https://huggingface.co/prithivMLmods/Qwen3-VL-8B-Instruct-abliterated-v2-GGUF/resolve/main/Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf
+# The node only recognises projectors named mmproj-*.gguf, so the mmproj is
+# stored under a normalised name (entrypoint.sh applies the same rule).
 RUN mkdir -p /ComfyUI/models/LLM && \
     if [ "$BAKE_PROMPT_LLM" = "1" ]; then \
         hfget "${PROMPT_LLM_URL}" "/ComfyUI/models/LLM/$(basename "${PROMPT_LLM_URL}")" && \
-        hfget "${PROMPT_MMPROJ_URL}" "/ComfyUI/models/LLM/$(basename "${PROMPT_MMPROJ_URL}")"; \
+        hfget "${PROMPT_MMPROJ_URL}" "/ComfyUI/models/LLM/$(/usr/local/bin/mmproj-name "${PROMPT_MMPROJ_URL}")"; \
     fi
 
 # Tiny output node that publishes the expanded prompt to the job history

@@ -433,7 +433,7 @@ Wan2.2 responds much better to long, concrete prompts than to a few words, and i
 
 *   `new_Wan22_expand_api.json` and `new_Wan22_flf2v_expand_api.json` are the base workflows plus nodes **900** and **901**; node **135**'s `positive_prompt` becomes a link instead of a literal string. Regenerate them after editing the base workflows with `python tools/build_expand_workflows.py` (`--check` in CI).
 *   `expand_only: true` queues only nodes 244/171/235/236/900/901, so no diffusion model is touched. A preview on a warm worker takes a few seconds on the GPU.
-*   The default model is **Qwen3-VL-8B-Instruct (Q8_0)** from [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) plus its mmproj (~9.4 GB together), run through the CUDA build of `llama-cpp-python` ([JamePeng fork](https://github.com/JamePeng/llama-cpp-python), which is needed for Qwen3-VL vision). The node unloads the LLM as soon as it has answered, so it does not compete with Wan2.2 for VRAM during sampling.
+*   The default model is **Qwen3-VL-8B-Instruct abliterated v2 (Q8_0)** from [prithivMLmods/Qwen3-VL-8B-Instruct-abliterated-v2-GGUF](https://huggingface.co/prithivMLmods/Qwen3-VL-8B-Instruct-abliterated-v2-GGUF) plus its mmproj (~9.4 GB together) — a refusal-free build of Qwen's model, so it describes any frame instead of declining. Prefer the stock model? Point `PROMPT_LLM_URL` / `PROMPT_MMPROJ_URL` at [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) (`Qwen3VL-8B-Instruct-Q8_0.gguf` / `mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf`). Either way the LLM is run through the CUDA build of `llama-cpp-python` ([JamePeng fork](https://github.com/JamePeng/llama-cpp-python), which is needed for Qwen3-VL vision). The node unloads the LLM as soon as it has answered, so it does not compete with Wan2.2 for VRAM during sampling.
 
 ### Where the model lives
 
@@ -454,7 +454,7 @@ All model downloads — at build time and at start-up — go through `hfget.sh`,
 | `PROMPT_EXPANSION_LANGUAGE` | `zh` | Default output language when a request does not set one. |
 | `PROMPT_EXPANSION_DEVICE` | `GPU` | Default device for local GGUF inference. |
 | `PROMPT_EXPANSION_MODEL` | first Qwen GGUF in `models/LLM`, then `/runpod-volume/LLM` | Default model (`<file>.gguf`, `LLM/<file>.gguf`, `/runpod-volume/LLM/<file>.gguf` or a DashScope model name). |
-| `PROMPT_LLM_URL` / `PROMPT_MMPROJ_URL` | Qwen3-VL-8B-Instruct Q8_0 | What `entrypoint.sh` downloads when no model is present. Override to use another quant or Qwen family (keep the model and its mmproj together, and keep a family prefix such as `Qwen3VL` in the filename so mmproj auto-detect works). |
+| `PROMPT_LLM_URL` / `PROMPT_MMPROJ_URL` | Qwen3-VL-8B-Instruct abliterated v2 Q8_0 | What `entrypoint.sh` downloads when the configured model is missing. Override to use another quant, the stock model, or another Qwen-VL family (keep the model and its mmproj together, and keep a family prefix such as `Qwen3-VL`/`Qwen3VL` at the start of the filename so mmproj auto-detect works). The projector is stored as `mmproj-<name>.gguf` whatever the source calls it (`mmproj-name.sh`), because the node only recognises that pattern. |
 | `PROMPT_LLM_AUTO_DOWNLOAD` | `1` | `0` disables the start-up download. |
 | `DASHSCOPE_API_KEY` | – | Written to the node's `api_key.txt` at start-up so cloud Qwen models can be used as `prompt_expansion.model`. |
 

@@ -330,6 +330,13 @@ def default_llm_model(llm_dir=None):
     models = list_local_llm_models(llm_dir)
     if not models:
         return None
+    # Prefer the model the image was configured to fetch (PROMPT_LLM_URL) when
+    # several are present, e.g. the stock Qwen3-VL next to the abliterated one
+    # on a volume that predates the switch.
+    configured = os.path.basename(os.getenv("PROMPT_LLM_URL", "").split("?")[0]).lower()
+    for m in models:
+        if configured and os.path.basename(m).lower() == configured:
+            return f"Local: {m}"
     return f"Local: {models[0]}"
 
 

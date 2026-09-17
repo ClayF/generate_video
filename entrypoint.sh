@@ -19,9 +19,11 @@ fi
 #                                        quant or Qwen family)
 #   PROMPT_LLM_AUTO_DOWNLOAD=0           skip entirely (e.g. cloud models only)
 # ---------------------------------------------------------------------------
-llm_have() {  # any Qwen GGUF (not an mmproj) already present?
+LLM_FILE="$(basename "${PROMPT_LLM_URL%%\?*}")"
+MMPROJ_FILE="$(/usr/local/bin/mmproj-name "$PROMPT_MMPROJ_URL")"
+llm_have() {  # is the configured model (and its projector) already present?
     for d in /ComfyUI/models/LLM /runpod-volume/LLM; do
-        [ -d "$d" ] && find "$d" -iname '*qwen*.gguf' ! -iname 'mmproj*' -size +100M 2>/dev/null | grep -q . && return 0
+        [ -s "$d/$LLM_FILE" ] && { [ -z "$PROMPT_MMPROJ_URL" ] || [ -s "$d/$MMPROJ_FILE" ]; } && return 0
     done
     return 1
 }
@@ -36,9 +38,11 @@ if [ "${PROMPT_LLM_AUTO_DOWNLOAD:-1}" != "0" ] && [ -n "$PROMPT_LLM_URL" ] && ! 
              "--build-arg BAKE_PROMPT_LLM=1."
     fi
     mkdir -p "$LLM_DEST"
-    for url in "$PROMPT_LLM_URL" "$PROMPT_MMPROJ_URL"; do
+    for pair in "$PROMPT_LLM_URL|$LLM_FILE" "$PROMPT_MMPROJ_URL|$MMPROJ_FILE"; do
+        url="${pair%%|*}"; name="${pair#*|}"
         [ -n "$url" ] || continue
-        f="$LLM_DEST/$(basename "$url")"
+        f="$LLM_DEST/$name"
+        [ -s "$f" ] && { echo "Present: $f"; continue; }
         echo "Fetching prompt-expansion model: $url -> $f"
         # hfget stages next to the destination and only moves the file into place
         # when complete, so an interrupted start never leaves a truncated .gguf
@@ -50,7 +54,7 @@ if [ "${PROMPT_LLM_AUTO_DOWNLOAD:-1}" != "0" ] && [ -n "$PROMPT_LLM_URL" ] && ! 
         fi
     done
 elif llm_have; then
-    echo "Prompt-expansion model present."
+    echo "Prompt-expansion model present: $LLM_FILE"
 fi
 
 # Start ComfyUI in the background

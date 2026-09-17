@@ -62,7 +62,7 @@ class PromptExpansionSettings(unittest.TestCase):
         ]
         for p in self.patches:
             p.start()
-        for k in ("PROMPT_EXPANSION_MODEL", "PROMPT_EXPANSION_LANGUAGE", "PROMPT_EXPANSION_DEVICE"):
+        for k in ("PROMPT_EXPANSION_MODEL", "PROMPT_EXPANSION_LANGUAGE", "PROMPT_EXPANSION_DEVICE", "PROMPT_LLM_URL"):
             os.environ.pop(k, None)
 
     def tearDown(self):
@@ -85,6 +85,18 @@ class PromptExpansionSettings(unittest.TestCase):
 
     def test_local_discovery_skips_mmproj_and_non_qwen(self):
         self.assertEqual(handler.list_local_llm_models(self.llm_dir), ["LLM/Qwen3VL-8B-Instruct-Q8_0.gguf"])
+
+    def test_default_prefers_the_configured_model_when_several_exist(self):
+        open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf"), "wb").close()
+        open(os.path.join(self.llm_dir, "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"), "wb").close()
+        # nothing configured: alphabetical (abliterated sorts first, 'qwen3-v' < 'qwen3vl')
+        self.assertEqual(handler.default_llm_model(), "Local: LLM/Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf")
+        with mock.patch.dict(os.environ, {"PROMPT_LLM_URL": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf?download=true"}):
+            self.assertEqual(handler.default_llm_model(), "Local: LLM/Qwen3VL-8B-Instruct-Q8_0.gguf")
+        with mock.patch.dict(os.environ, {"PROMPT_LLM_URL": "https://example.com/not-downloaded.gguf"}):
+            self.assertEqual(handler.default_llm_model(), "Local: LLM/Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf")
+        # the renamed projector is never offered as a model
+        self.assertNotIn("mmproj", " ".join(handler.list_local_llm_models()))
 
     def test_volume_models_are_listed_by_absolute_path_like_the_node(self):
         # outside the models dir, like a real /runpod-volume mount
