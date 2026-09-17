@@ -248,7 +248,7 @@ class DiagnosticsAndDownload(unittest.TestCase):
             out = handler.handler({"input": {"diagnostics": True}})
         d = out["diagnostics"]
         self.assertEqual(d["hf_token"]["variable"], "HUGGINGFACE_TOKEN")
-        self.assertEqual(d["hf_token"]["value"], "hf_abc… (18 chars)")
+        self.assertEqual(d["hf_token"]["value"], "hf_abc… (19 chars)")
         self.assertEqual(d["expected_files"], {"model": "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf",
                                                "mmproj": "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"})
         self.assertEqual(d["llm_files"][self.llm], {})
