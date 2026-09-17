@@ -433,7 +433,7 @@ Wan2.2 responds much better to long, concrete prompts than to a few words, and i
 
 *   `new_Wan22_expand_api.json` and `new_Wan22_flf2v_expand_api.json` are the base workflows plus nodes **900** and **901**; node **135**'s `positive_prompt` becomes a link instead of a literal string. Regenerate them after editing the base workflows with `python tools/build_expand_workflows.py` (`--check` in CI).
 *   `expand_only: true` queues only nodes 244/171/235/236/900/901, so no diffusion model is touched. A preview on a warm worker takes a few seconds on the GPU.
-*   The bundled model is **Qwen3-VL-8B-Instruct (Q8_0)** with its mmproj in `/ComfyUI/models/LLM/`, run through the CUDA build of `llama-cpp-python` ([JamePeng fork](https://github.com/JamePeng/llama-cpp-python), which is needed for Qwen3-VL vision). The node unloads the LLM as soon as it has answered, so it does not compete with Wan2.2 for VRAM during sampling.
+*   The bundled model is **Qwen3-VL-8B-Instruct (Q8_0)** from [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) with its mmproj in `/ComfyUI/models/LLM/`, run through the CUDA build of `llama-cpp-python` ([JamePeng fork](https://github.com/JamePeng/llama-cpp-python), which is needed for Qwen3-VL vision). The node unloads the LLM as soon as it has answered, so it does not compete with Wan2.2 for VRAM during sampling.
 
 ### Endpoint configuration
 

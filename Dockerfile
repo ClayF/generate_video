@@ -72,11 +72,12 @@ RUN PYTAG=$(python -c 'import sys; print("cp%d%d" % sys.version_info[:2])') && \
 # same folder; the filename must start with a family prefix such as Qwen3VL so
 # the node's mmproj auto-detect works). Override with --build-arg to use a
 # smaller quant or a different Qwen family.
-ARG PROMPT_LLM_URL=https://huggingface.co/ggml-org/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf
-ARG PROMPT_MMPROJ_URL=https://huggingface.co/ggml-org/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+ARG PROMPT_LLM_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf
+ARG PROMPT_MMPROJ_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+# -nv (not -q) so a failed download shows the HTTP status in the build log.
 RUN mkdir -p /ComfyUI/models/LLM && \
-    wget -q "${PROMPT_LLM_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_LLM_URL}")" && \
-    wget -q "${PROMPT_MMPROJ_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_MMPROJ_URL}")"
+    wget -nv --tries=3 "${PROMPT_LLM_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_LLM_URL}")" && \
+    wget -nv --tries=3 "${PROMPT_MMPROJ_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_MMPROJ_URL}")"
 
 # Tiny output node that publishes the expanded prompt to the job history
 COPY custom_nodes/generate_video_prompt_nodes /ComfyUI/custom_nodes/generate_video_prompt_nodes
