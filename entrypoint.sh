@@ -19,11 +19,23 @@ fi
 #                                        quant or Qwen family)
 #   PROMPT_LLM_AUTO_DOWNLOAD=0           skip entirely (e.g. cloud models only)
 # ---------------------------------------------------------------------------
+if [ -f /usr/local/bin/mmproj-name ]; then
+    source /usr/local/bin/mmproj-name          # mmproj_name / mmproj_fix_dir
+else
+    mmproj_name() { basename "${1%%\?*}"; }   # very old image: keep the source name
+    mmproj_fix_dir() { :; }
+fi
+# Heal projectors saved under their source name (e.g. by an earlier build):
+# the node only sees mmproj-*.gguf.
+mmproj_fix_dir /ComfyUI/models/LLM /runpod-volume/LLM
+
 LLM_FILE="$(basename "${PROMPT_LLM_URL%%\?*}")"
-MMPROJ_FILE="$(/usr/local/bin/mmproj-name "$PROMPT_MMPROJ_URL")"
+MMPROJ_FILE="$(mmproj_name "$PROMPT_MMPROJ_URL")"
 llm_have() {  # is the configured model (and its projector) already present?
     for d in /ComfyUI/models/LLM /runpod-volume/LLM; do
-        [ -s "$d/$LLM_FILE" ] && { [ -z "$PROMPT_MMPROJ_URL" ] || [ -s "$d/$MMPROJ_FILE" ]; } && return 0
+        [ -n "$LLM_FILE" ] && [ -s "$d/$LLM_FILE" ] || continue
+        [ -z "$PROMPT_MMPROJ_URL" ] && return 0
+        [ -n "$MMPROJ_FILE" ] && [ -s "$d/$MMPROJ_FILE" ] && return 0
     done
     return 1
 }
@@ -40,7 +52,7 @@ if [ "${PROMPT_LLM_AUTO_DOWNLOAD:-1}" != "0" ] && [ -n "$PROMPT_LLM_URL" ] && ! 
     mkdir -p "$LLM_DEST"
     for pair in "$PROMPT_LLM_URL|$LLM_FILE" "$PROMPT_MMPROJ_URL|$MMPROJ_FILE"; do
         url="${pair%%|*}"; name="${pair#*|}"
-        [ -n "$url" ] || continue
+        [ -n "$url" ] && [ -n "$name" ] || continue
         f="$LLM_DEST/$name"
         [ -s "$f" ] && { echo "Present: $f"; continue; }
         echo "Fetching prompt-expansion model: $url -> $f"
@@ -56,6 +68,7 @@ if [ "${PROMPT_LLM_AUTO_DOWNLOAD:-1}" != "0" ] && [ -n "$PROMPT_LLM_URL" ] && ! 
 elif llm_have; then
     echo "Prompt-expansion model present: $LLM_FILE"
 fi
+echo "LLM folder(s):"; ls -la /ComfyUI/models/LLM /runpod-volume/LLM 2>/dev/null | grep -i '\.gguf' || echo "  (no GGUF files)"
 
 # Start ComfyUI in the background
 echo "Starting ComfyUI in the background..."

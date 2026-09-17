@@ -10,6 +10,7 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import binascii # Base64 에러 처리를 위해 import
+import re
 import subprocess
 import shutil
 import time
@@ -314,13 +315,45 @@ def list_local_llm_models(llm_dir=None, extra_dirs=None):
     for d in dirs:
         if not d or not os.path.isdir(d):
             continue
+        heal_projector_names(d)   # a projector saved under its source name is not a model
         for root, _, files in os.walk(d):
             for f in files:
                 lower = f.lower()
-                if not lower.endswith(".gguf") or lower.startswith("mmproj") or "qwen" not in lower:
+                if not lower.endswith(".gguf") or "mmproj" in lower or "qwen" not in lower:
                     continue
                 names.append(_node_model_name(os.path.join(root, f), models_dir))
     return sorted(set(names), key=str.lower)
+
+
+def heal_projector_names(model_dir):
+    """Rename projector files the node cannot see (…mmproj… not starting with
+    'mmproj-') to mmproj-<name>.gguf, mirroring mmproj-name.sh. Returns the
+    projectors now present in the folder."""
+    if not os.path.isdir(model_dir):
+        return []
+    for f in sorted(os.listdir(model_dir)):
+        lower = f.lower()
+        if not lower.endswith(".gguf") or "mmproj" not in lower or lower.startswith("mmproj-"):
+            continue
+        stripped = re.sub(r"[._-]?mmproj[._-]?", "-", f, flags=re.I).lstrip("-")
+        new = os.path.join(model_dir, "mmproj-" + re.sub(r"-{2,}", "-", stripped))
+        try:
+            if os.path.exists(new):
+                os.remove(os.path.join(model_dir, f))
+                logger.info(f"mmproj: removed duplicate {f} ({os.path.basename(new)} exists)")
+            else:
+                os.rename(os.path.join(model_dir, f), new)
+                logger.info(f"mmproj: renamed {f} -> {os.path.basename(new)}")
+        except OSError as e:
+            logger.warning(f"mmproj: could not rename {f}: {e}")
+    return sorted(x for x in os.listdir(model_dir) if x.lower().startswith("mmproj-") and x.lower().endswith(".gguf"))
+
+
+def local_model_dir(model_value):
+    """Folder on disk for a 'Local: …' combo value (relative names live under ComfyUI/models)."""
+    name = model_value[len("Local: "):] if model_value.startswith("Local: ") else model_value
+    path = name if os.path.isabs(name) else os.path.join(os.path.dirname(os.path.normpath(LLM_DIR)), name)
+    return os.path.dirname(path)
 
 
 def default_llm_model(llm_dir=None):
@@ -409,6 +442,19 @@ def resolve_prompt_expansion(job_input):
             raise JobError(f"prompt_expansion.model {model!r} is a DashScope cloud model but no API key is "
                            "configured. Set the DASHSCOPE_API_KEY environment variable on the endpoint.")
 
+    mmproj = str(raw.get("mmproj", "(Auto-detect)"))
+    if model.startswith("Local: ") and mmproj == "(Auto-detect)":
+        # The node needs an mmproj-*.gguf next to the model. Fix projectors saved
+        # under their source name, and fail early with the folder listing instead
+        # of the node's terse "candidates: (none)".
+        mdir = local_model_dir(model)
+        projectors = heal_projector_names(mdir)
+        if not projectors:
+            listing = ", ".join(sorted(os.listdir(mdir))) if os.path.isdir(mdir) else "(folder missing)"
+            raise JobError(f"No projector (mmproj-*.gguf) found next to {os.path.basename(model)} in {mdir}. "
+                           f"The start-up download may have failed or been interrupted; restart the worker "
+                           f"(entrypoint.sh resumes it) or copy the mmproj there. Folder contains: {listing}")
+
     try:
         max_retries = int(raw.get("max_retries", 3))
     except (TypeError, ValueError):
@@ -418,7 +464,7 @@ def resolve_prompt_expansion(job_input):
     return {
         "language": language,
         "model": model,
-        "mmproj": str(raw.get("mmproj", "(Auto-detect)")),
+        "mmproj": mmproj,
         "device": device,
         "max_retries": max_retries,
         "save_tokens": bool(raw.get("save_tokens", True)),

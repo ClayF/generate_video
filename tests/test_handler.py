@@ -86,6 +86,28 @@ class PromptExpansionSettings(unittest.TestCase):
     def test_local_discovery_skips_mmproj_and_non_qwen(self):
         self.assertEqual(handler.list_local_llm_models(self.llm_dir), ["LLM/Qwen3VL-8B-Instruct-Q8_0.gguf"])
 
+    def test_misnamed_projector_is_healed_at_request_time(self):
+        for f in os.listdir(self.llm_dir):
+            os.remove(os.path.join(self.llm_dir, f))
+        open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf"), "wb").close()
+        open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf"), "wb").close()
+        e = handler.resolve_prompt_expansion({"prompt_expansion": True})
+        self.assertEqual(e["model"], "Local: LLM/Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf")
+        self.assertEqual(sorted(os.listdir(self.llm_dir)),
+                         ["Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf", "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"])
+        # healing is idempotent and never touches a correctly named projector
+        self.assertEqual(handler.heal_projector_names(self.llm_dir), ["mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"])
+
+    def test_missing_projector_is_a_clear_error(self):
+        os.remove(os.path.join(self.llm_dir, "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf"))
+        with self.assertRaises(handler.JobError) as cm:
+            handler.resolve_prompt_expansion({"prompt_expansion": True})
+        self.assertIn("No projector", str(cm.exception))
+        self.assertIn("Qwen3VL-8B-Instruct-Q8_0.gguf", str(cm.exception))
+        # an explicit mmproj selection is passed through untouched (the node validates it)
+        e = handler.resolve_prompt_expansion({"prompt_expansion": {"mmproj": "LLM/whatever.gguf"}})
+        self.assertEqual(e["mmproj"], "LLM/whatever.gguf")
+
     def test_default_prefers_the_configured_model_when_several_exist(self):
         open(os.path.join(self.llm_dir, "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf"), "wb").close()
         open(os.path.join(self.llm_dir, "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"), "wb").close()
@@ -362,9 +384,14 @@ class HandlerEndToEnd(unittest.TestCase):
     """Drive handler() with ComfyUI mocked out."""
 
     def setUp(self):
-        # a real input dir + a real source image so image_path staging works
+        # a real input dir + a real source image so image_path staging works,
+        # and a models/LLM folder holding the model + projector the mocked default names
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         p = mock.patch.object(handler, "COMFY_INPUT_DIR", os.path.join(self.tmp.name, "input")); p.start(); self.addCleanup(p.stop)
+        llm_dir = os.path.join(self.tmp.name, "models", "LLM"); os.makedirs(llm_dir)
+        for name in ("Qwen3VL-8B-Instruct-Q8_0.gguf", "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf"):
+            open(os.path.join(llm_dir, name), "wb").close()
+        p = mock.patch.object(handler, "LLM_DIR", llm_dir); p.start(); self.addCleanup(p.stop)
         with open(os.path.join(self.tmp.name, "x.jpg"), "wb") as f:
             f.write(b"jpg")
 
