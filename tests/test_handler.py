@@ -244,7 +244,7 @@ class DiagnosticsAndDownload(unittest.TestCase):
     def test_diagnostics_job_reports_state_without_network(self):
         with mock.patch.object(handler, "_egress_probe", return_value="HTTP 200"), \
              mock.patch.object(handler, "_egress_probe_auth", return_value="HTTP 200 as me"), \
-             mock.patch.dict(os.environ, {"HUGGINGFACE_TOKEN": "hf_abcdefghijklmnop"}):
+             mock.patch.dict(os.environ, {"HUGGINGFACE_TOKEN": ' "Bearer hf_abcdefghijklmnop" '}):
             out = handler.handler({"input": {"diagnostics": True}})
         d = out["diagnostics"]
         self.assertEqual(d["hf_token"]["variable"], "HUGGINGFACE_TOKEN")

@@ -17,9 +17,27 @@
 set -o pipefail
 url="$1"; dest="$2"
 for v in HF_TOKEN HUGGING_FACE_HUB_TOKEN HUGGINGFACE_HUB_TOKEN HUGGINGFACE_TOKEN HF_API_TOKEN HF_HUB_TOKEN; do
-    if [ -n "${!v}" ]; then export HF_TOKEN="${!v}"; HF_TOKEN_FROM="$v"; break; fi
+    if [ -n "${!v}" ]; then HF_TOKEN="${!v}"; HF_TOKEN_FROM="$v"; break; fi
 done
-echo "hfget: token: ${HF_TOKEN_FROM:-none} $( [ -n "$HF_TOKEN" ] && echo "(${HF_TOKEN:0:6}…, ${#HF_TOKEN} chars)" )"
+if [ -n "$HF_TOKEN" ]; then
+    # tolerate the usual copy/paste damage: quotes, whitespace, a "Bearer " prefix
+    HF_TOKEN="$(printf '%s' "$HF_TOKEN" | tr -d '[:space:]"'"'"'')"; HF_TOKEN="${HF_TOKEN#Bearer}"; HF_TOKEN="${HF_TOKEN#bearer}"
+    export HF_TOKEN
+    echo "hfget: token: $HF_TOKEN_FROM (${HF_TOKEN:0:6}…, ${#HF_TOKEN} chars)"
+    if [ "$HFGET_DRY" != "1" ]; then
+        # A wrong token is worse than none: Hugging Face answers 401 to every request
+        # that carries it, public files included. Check it once, drop it if rejected.
+        code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -H "Authorization: Bearer $HF_TOKEN" https://huggingface.co/api/whoami-v2 2>/dev/null)"
+        case "$code" in
+            200) echo "hfget: token accepted by huggingface.co" ;;
+            401|403) echo "hfget: WARNING token from $HF_TOKEN_FROM is REJECTED by huggingface.co (HTTP $code) — check the value on the endpoint (a Read token starting with hf_). Continuing without it." >&2
+                     unset HF_TOKEN ;;
+            *) echo "hfget: could not verify token (HTTP ${code:-none}); using it anyway" ;;
+        esac
+    fi
+else
+    echo "hfget: token: none (set HF_TOKEN on the endpoint — Hugging Face throttles anonymous downloads from datacenter IPs)"
+fi
 if [ -z "$url" ] || [ -z "$dest" ]; then echo "usage: hfget <url> <dest-file>" >&2; exit 2; fi
 mkdir -p "$(dirname "$dest")"
 # a 0-byte leftover from an earlier failed attempt is not a partial download

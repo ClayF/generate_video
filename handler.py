@@ -691,10 +691,18 @@ HF_TOKEN_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", 
 def hf_token_env():
     """Name of the first Hugging Face token variable that is set, and a masked value."""
     for v in HF_TOKEN_VARS:
-        val = os.getenv(v)
+        val = clean_hf_token(os.getenv(v))
         if val:
             return v, f"{val[:6]}… ({len(val)} chars)"
     return None, None
+
+
+def clean_hf_token(val):
+    """Strip the usual copy/paste damage: quotes, whitespace, a 'Bearer ' prefix."""
+    if not val:
+        return None
+    val = re.sub(r"[\s\"']", "", val)
+    return re.sub(r"^bearer", "", val, flags=re.I) or None
 
 
 def _egress_probe_auth(url="https://huggingface.co/api/whoami-v2"):
@@ -703,7 +711,7 @@ def _egress_probe_auth(url="https://huggingface.co/api/whoami-v2"):
     if not name:
         return "no token variable set"
     try:
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {os.getenv(name)}"})
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {clean_hf_token(os.getenv(name))}"})
         with urllib.request.urlopen(req, timeout=15) as r:
             who = json.loads(r.read().decode("utf-8", "replace"))
             return f"HTTP {r.status} as {who.get('name', '?')}"
@@ -761,7 +769,7 @@ def download_prompt_model():
         env = dict(os.environ)
         tok_name, _ = hf_token_env()
         if tok_name:
-            env["HF_TOKEN"] = os.environ[tok_name]
+            env["HF_TOKEN"] = clean_hf_token(os.environ[tok_name])
         proc = subprocess.run([hfget, url, dest], capture_output=True, text=True, env=env)
         out = (proc.stdout or "") + (proc.stderr or "")
         for line in out.splitlines():
