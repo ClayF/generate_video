@@ -458,6 +458,8 @@ class HandlerEndToEnd(unittest.TestCase):
             with open(os.path.join(llm_dir, name), "wb") as f:
                 f.write(b"\0" * 1_000_000)
         p = mock.patch.object(handler, "LLM_DIR", llm_dir); p.start(); self.addCleanup(p.stop)
+        # never let a real /runpod-volume on the test host leak in
+        p = mock.patch.object(handler, "VOLUME_LLM_DIR", os.path.join(self.tmp.name, "no-volume")); p.start(); self.addCleanup(p.stop)
         with open(os.path.join(self.tmp.name, "x.jpg"), "wb") as f:
             f.write(b"jpg")
 

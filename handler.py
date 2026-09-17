@@ -693,7 +693,7 @@ def diagnostics():
                                           "PROMPT_EXPANSION_MODEL", "PROMPT_EXPANSION_LANGUAGE", "PROMPT_EXPANSION_DEVICE")},
         "expected_files": {"model": os.path.basename((os.getenv("PROMPT_LLM_URL") or "").split("?")[0]) or None,
                            "mmproj": projector_name(os.getenv("PROMPT_MMPROJ_URL") or "") if os.getenv("PROMPT_MMPROJ_URL") else None},
-        "volume_mounted": os.path.isdir("/runpod-volume"),
+        "volume_mounted": os.path.isdir(os.path.dirname(VOLUME_LLM_DIR)),
         "llm_files": _gguf_listing(),
         "tools": {"hfget": shutil.which("hfget"), "mmproj-name": shutil.which("mmproj-name"),
                   "aria2c": shutil.which("aria2c"), "wget": shutil.which("wget")},
@@ -715,7 +715,7 @@ def download_prompt_model():
     urls = [(os.getenv("PROMPT_LLM_URL"), None), (os.getenv("PROMPT_MMPROJ_URL"), "mmproj")]
     if not urls[0][0]:
         raise JobError("PROMPT_LLM_URL is not set on this endpoint")
-    dest_dir = VOLUME_LLM_DIR if os.path.isdir("/runpod-volume") else LLM_DIR
+    dest_dir = VOLUME_LLM_DIR if os.path.isdir(os.path.dirname(VOLUME_LLM_DIR)) else LLM_DIR
     os.makedirs(dest_dir, exist_ok=True)
     hfget = shutil.which("hfget") or "/usr/local/bin/hfget"
     results, log_lines = [], []
