@@ -13,6 +13,7 @@ import binascii # Base64 에러 처리를 위해 import
 import re
 import subprocess
 import shutil
+import sys
 import time
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -329,6 +330,15 @@ def list_local_llm_models(llm_dir=None, extra_dirs=None):
     return sorted(set(names), key=str.lower)
 
 
+def projector_name(name_or_url):
+    """Filename a projector is stored under (mirror of mmproj-name.sh)."""
+    base = os.path.basename(str(name_or_url).split("?")[0])
+    if base.lower().startswith("mmproj-"):
+        return base
+    stripped = re.sub(r"[._-]?mmproj[._-]?", "-", base, flags=re.I).lstrip("-")
+    return "mmproj-" + re.sub(r"-{2,}", "-", stripped)
+
+
 def heal_projector_names(model_dir):
     """Rename projector files the node cannot see (…mmproj… not starting with
     'mmproj-') to mmproj-<name>.gguf, mirroring mmproj-name.sh. Returns the
@@ -627,8 +637,131 @@ def wait_for_comfyui():
     return ws
 
 
+# ---------------------------------------------------------------------------
+# Diagnostics / on-demand model download. Container start-up logs are easy to
+# lose on RunPod; these run inside a job so the answer comes back in the output.
+#   {"input": {"diagnostics": true}}            -> environment, LLM folders, egress probe, download log
+#   {"input": {"download_prompt_model": true}}  -> run hfget for PROMPT_LLM_URL / PROMPT_MMPROJ_URL now
+# ---------------------------------------------------------------------------
+DOWNLOAD_LOG = os.getenv("PROMPT_LLM_DOWNLOAD_LOG", "/tmp/prompt-llm-download.log")
+
+
+def _read(path, tail=None):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            data = f.read()
+        return data if tail is None else "\n".join(data.splitlines()[-tail:])
+    except OSError:
+        return None
+
+
+def _gguf_listing():
+    out = {}
+    for d in (LLM_DIR, VOLUME_LLM_DIR):
+        if not os.path.isdir(d):
+            out[d] = "(missing)"
+            continue
+        out[d] = {f: os.path.getsize(os.path.join(d, f)) for f in sorted(os.listdir(d))
+                  if os.path.isfile(os.path.join(d, f))}
+    return out
+
+
+def _egress_probe(url="https://huggingface.co/"):
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return f"HTTP {r.status}"
+    except urllib.error.HTTPError as e:
+        return f"HTTP {e.code}"
+    except Exception as e:
+        return f"FAILED: {type(e).__name__}: {e}"
+
+
+def _module_version(name):
+    try:
+        mod = __import__(name)
+        return getattr(mod, "__version__", "present")
+    except Exception as e:
+        return f"missing ({type(e).__name__})"
+
+
+def diagnostics():
+    info = {
+        "build_commit": (_read("/build-commit") or "unknown").strip(),
+        "build_date": (_read("/build-date") or "unknown").strip(),
+        "env": {k: os.getenv(k) for k in ("PROMPT_LLM_URL", "PROMPT_MMPROJ_URL", "PROMPT_LLM_AUTO_DOWNLOAD",
+                                          "PROMPT_EXPANSION_MODEL", "PROMPT_EXPANSION_LANGUAGE", "PROMPT_EXPANSION_DEVICE")},
+        "expected_files": {"model": os.path.basename((os.getenv("PROMPT_LLM_URL") or "").split("?")[0]) or None,
+                           "mmproj": projector_name(os.getenv("PROMPT_MMPROJ_URL") or "") if os.getenv("PROMPT_MMPROJ_URL") else None},
+        "volume_mounted": os.path.isdir("/runpod-volume"),
+        "llm_files": _gguf_listing(),
+        "tools": {"hfget": shutil.which("hfget"), "mmproj-name": shutil.which("mmproj-name"),
+                  "aria2c": shutil.which("aria2c"), "wget": shutil.which("wget")},
+        "python": {"executable": sys.executable, "huggingface_hub": _module_version("huggingface_hub"),
+                   "hf_xet": _module_version("hf_xet"), "hf_transfer": _module_version("hf_transfer"),
+                   "llama_cpp": _module_version("llama_cpp")},
+        "multimodal_node_dir": os.path.isdir(MULTIMODAL_NODE_DIR),
+        "egress_huggingface": _egress_probe(),
+        "download_log_tail": _read(DOWNLOAD_LOG, tail=60),
+    }
+    try:
+        info["default_model"] = default_llm_model()
+    except Exception as e:
+        info["default_model"] = f"error: {e}"
+    return info
+
+
+def download_prompt_model():
+    urls = [(os.getenv("PROMPT_LLM_URL"), None), (os.getenv("PROMPT_MMPROJ_URL"), "mmproj")]
+    if not urls[0][0]:
+        raise JobError("PROMPT_LLM_URL is not set on this endpoint")
+    dest_dir = VOLUME_LLM_DIR if os.path.isdir("/runpod-volume") else LLM_DIR
+    os.makedirs(dest_dir, exist_ok=True)
+    hfget = shutil.which("hfget") or "/usr/local/bin/hfget"
+    results, log_lines = [], []
+    for url, kind in urls:
+        if not url:
+            continue
+        name = projector_name(url) if kind == "mmproj" else os.path.basename(url.split("?")[0])
+        dest = os.path.join(dest_dir, name)
+        if os.path.isfile(dest) and os.path.getsize(dest) > 1_000_000:
+            results.append({"file": dest, "status": "present", "bytes": os.path.getsize(dest)})
+            continue
+        logger.info(f"Downloading {url} -> {dest}")
+        proc = subprocess.run([hfget, url, dest], capture_output=True, text=True)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        for line in out.splitlines():
+            logger.info(f"hfget: {line}")
+        log_lines.append(out)
+        ok = proc.returncode == 0 and os.path.isfile(dest)
+        results.append({"file": dest, "status": "downloaded" if ok else "FAILED",
+                        "bytes": os.path.getsize(dest) if os.path.isfile(dest) else 0,
+                        "returncode": proc.returncode})
+        if not ok:
+            break
+    try:
+        with open(DOWNLOAD_LOG, "a", encoding="utf-8") as f:
+            f.write("\n".join(log_lines) + "\n")
+    except OSError:
+        pass
+    heal_projector_names(dest_dir)
+    return {"results": results, "llm_files": _gguf_listing(), "log": "\n".join(log_lines)[-8000:]}
+
+
 def handler(job):
     job_input = job.get("input", {})
+    if job_input.get("diagnostics"):
+        try:
+            return {"diagnostics": diagnostics()}
+        except Exception as e:
+            return {"error": f"diagnostics failed: {type(e).__name__}: {e}"}
+    if job_input.get("download_prompt_model"):
+        try:
+            return download_prompt_model()
+        except JobError as e:
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": f"download failed: {type(e).__name__}: {e}"}
 
     # Never log base64 payloads in full
     logger.info("Received job input: " + json.dumps(
@@ -705,4 +838,6 @@ def handler(job):
 
 
 if __name__ == "__main__":
+    logger.info(f"generate_video handler starting — build {(_read('/build-commit') or 'unknown').strip()} "
+                f"({(_read('/build-date') or 'unknown').strip()}); LLM files: {json.dumps(_gguf_listing())}")
     runpod.serverless.start({"handler": handler})

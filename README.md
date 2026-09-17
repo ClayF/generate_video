@@ -445,6 +445,17 @@ The 9 GB download does not fit inside RunPod's build time limit, so it is **not 
 
 Set `PROMPT_LLM_AUTO_DOWNLOAD=0` on the endpoint to skip the download (cloud models only, or you manage the files yourself).
 
+**Checking what a worker has.** Two job types answer without rendering anything, so the state of the model download is never a guessing game:
+
+```bash
+# environment, LLM folders (with sizes), egress probe, tail of the start-up download log
+curl -s -X POST https://api.runpod.ai/v2/<ENDPOINT_ID>/runsync -H "Authorization: Bearer $RUNPOD_API_KEY" \
+     -H "Content-Type: application/json" -d '{"input": {"diagnostics": true}}'
+# run the download now (same hfget as start-up) and report the result — use /run and poll /status, it takes minutes
+curl -s -X POST https://api.runpod.ai/v2/<ENDPOINT_ID>/run -H "Authorization: Bearer $RUNPOD_API_KEY" \
+     -H "Content-Type: application/json" -d '{"input": {"download_prompt_model": true}}'
+```
+
 All model downloads — at build time and at start-up — go through `hfget.sh`, which uses the Hugging Face hub client with its parallel Xet / `hf_transfer` backends and falls back to `aria2c` (16 connections) and then `wget`. Set `HF_TOKEN` on the endpoint (or as a build arg) for gated repos.
 
 ### Endpoint configuration

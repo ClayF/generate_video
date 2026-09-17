@@ -112,6 +112,9 @@ RUN hfget https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf
 
 COPY . .
 COPY extra_model_paths.yaml /ComfyUI/extra_model_paths.yaml
+# Which commit this image was built from — shown by {"diagnostics": true} and at handler start
+RUN (git -C / rev-parse --short HEAD 2>/dev/null || echo unknown) > /build-commit && \
+    date -u +%Y-%m-%dT%H:%M:%SZ > /build-date && echo "build $(cat /build-commit) $(cat /build-date)"
 RUN chmod +x /entrypoint.sh
 
 CMD ["/entrypoint.sh"]

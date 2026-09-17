@@ -6,6 +6,7 @@ import base64
 import importlib
 import json
 import os
+import shutil
 import sys
 import tempfile
 import types
@@ -221,6 +222,62 @@ class InputStaging(unittest.TestCase):
         self.assertEqual(g[handler.NODE_END_IMAGE]["inputs"]["image"], "task_4/end_image.jpg")
         # a file that is not under the input dir is passed through untouched
         self.assertEqual(handler.comfy_image_ref("/elsewhere/x.png"), "/elsewhere/x.png")
+
+
+class DiagnosticsAndDownload(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.llm = os.path.join(self.tmp.name, "models", "LLM"); os.makedirs(self.llm)
+        self.vol = os.path.join(self.tmp.name, "vol", "LLM")
+        for k, v in (("LLM_DIR", self.llm), ("VOLUME_LLM_DIR", self.vol),
+                     ("DOWNLOAD_LOG", os.path.join(self.tmp.name, "dl.log"))):
+            p = mock.patch.object(handler, k, v); p.start(); self.addCleanup(p.stop)
+        env = {"PROMPT_LLM_URL": "https://huggingface.co/x/y/resolve/main/Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf",
+               "PROMPT_MMPROJ_URL": "https://huggingface.co/x/y/resolve/main/Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf?download=true"}
+        p = mock.patch.dict(os.environ, env); p.start(); self.addCleanup(p.stop)
+
+    def test_projector_name(self):
+        self.assertEqual(handler.projector_name("Qwen3-VL-8B-Instruct-abliterated-v2.mmproj-Q8_0.gguf"), "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf")
+        self.assertEqual(handler.projector_name("https://h/f/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf?download=true"), "mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf")
+        self.assertEqual(handler.projector_name("Huihui-Qwen3-VL-8B.mmproj-f16.gguf"), "mmproj-Huihui-Qwen3-VL-8B-f16.gguf")
+
+    def test_diagnostics_job_reports_state_without_network(self):
+        with mock.patch.object(handler, "_egress_probe", return_value="HTTP 200"):
+            out = handler.handler({"input": {"diagnostics": True}})
+        d = out["diagnostics"]
+        self.assertEqual(d["expected_files"], {"model": "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf",
+                                               "mmproj": "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"})
+        self.assertEqual(d["llm_files"][self.llm], {})
+        self.assertEqual(d["llm_files"][self.vol], "(missing)")
+        self.assertEqual(d["egress_huggingface"], "HTTP 200")
+        self.assertIsNone(d["default_model"])
+
+    def test_download_job_runs_hfget_and_heals_names(self):
+        fake = os.path.join(self.tmp.name, "hfget")
+        with open(fake, "w") as f:   # writes 2 MB to the requested destination
+            f.write("#!/bin/bash\necho fake $1 $2\nhead -c 2000000 /dev/zero > \"$2\"\n")
+        os.chmod(fake, 0o755)
+        with mock.patch.object(shutil, "which", side_effect=lambda n: fake if n == "hfget" else None):
+            out = handler.handler({"input": {"download_prompt_model": True}})
+        self.assertEqual([r["status"] for r in out["results"]], ["downloaded", "downloaded"])
+        self.assertEqual(sorted(os.listdir(self.llm)),
+                         ["Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf", "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"])
+        self.assertIn("fake", out["log"])
+        # second call: both present, nothing re-downloaded
+        with mock.patch.object(shutil, "which", side_effect=lambda n: fake if n == "hfget" else None):
+            out = handler.handler({"input": {"download_prompt_model": True}})
+        self.assertEqual([r["status"] for r in out["results"]], ["present", "present"])
+
+    def test_download_job_reports_failure(self):
+        fake = os.path.join(self.tmp.name, "hfget")
+        with open(fake, "w") as f:
+            f.write("#!/bin/bash\necho boom >&2\nexit 1\n")
+        os.chmod(fake, 0o755)
+        with mock.patch.object(shutil, "which", side_effect=lambda n: fake if n == "hfget" else None):
+            out = handler.handler({"input": {"download_prompt_model": True}})
+        self.assertEqual(out["results"][0]["status"], "FAILED")
+        self.assertEqual(len(out["results"]), 1)   # stops after the first failure
+        self.assertIn("boom", out["log"])
 
 
 class WorkflowBuilding(unittest.TestCase):
