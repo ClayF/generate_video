@@ -456,7 +456,7 @@ curl -s -X POST https://api.runpod.ai/v2/<ENDPOINT_ID>/run -H "Authorization: Be
      -H "Content-Type: application/json" -d '{"input": {"download_prompt_model": true}}'
 ```
 
-All model downloads — at build time and at start-up — go through `hfget.sh`, which uses the Hugging Face hub client with its parallel Xet / `hf_transfer` backends and falls back to `aria2c` (16 connections) and then `wget`. Set `HF_TOKEN` on the endpoint (or as a build arg) for gated repos.
+All model downloads — at build time and at start-up — go through `hfget.sh`, which uses the Hugging Face hub client with its parallel Xet / `hf_transfer` backends and falls back to `aria2c` (16 connections) and then `wget`. Set `HF_TOKEN` on the endpoint (`HUGGINGFACE_TOKEN`, `HF_API_TOKEN`, `HUGGING_FACE_HUB_TOKEN` and friends are accepted too) — Hugging Face rate-limits anonymous downloads from datacenter IPs, so on RunPod a free account token is effectively required; `diagnostics` shows which variable was picked up and whether the token is valid.
 
 ### Endpoint configuration
 

@@ -242,9 +242,13 @@ class DiagnosticsAndDownload(unittest.TestCase):
         self.assertEqual(handler.projector_name("Huihui-Qwen3-VL-8B.mmproj-f16.gguf"), "mmproj-Huihui-Qwen3-VL-8B-f16.gguf")
 
     def test_diagnostics_job_reports_state_without_network(self):
-        with mock.patch.object(handler, "_egress_probe", return_value="HTTP 200"):
+        with mock.patch.object(handler, "_egress_probe", return_value="HTTP 200"), \
+             mock.patch.object(handler, "_egress_probe_auth", return_value="HTTP 200 as me"), \
+             mock.patch.dict(os.environ, {"HUGGINGFACE_TOKEN": "hf_abcdefghijklmnop"}):
             out = handler.handler({"input": {"diagnostics": True}})
         d = out["diagnostics"]
+        self.assertEqual(d["hf_token"]["variable"], "HUGGINGFACE_TOKEN")
+        self.assertEqual(d["hf_token"]["value"], "hf_abc… (18 chars)")
         self.assertEqual(d["expected_files"], {"model": "Qwen3-VL-8B-Instruct-abliterated-v2.Q8_0.gguf",
                                                "mmproj": "mmproj-Qwen3-VL-8B-Instruct-abliterated-v2-Q8_0.gguf"})
         self.assertEqual(d["llm_files"][self.llm], {})

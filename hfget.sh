@@ -9,10 +9,17 @@
 # a staging file and renames on completion, so $dest is either complete or
 # absent — never 0 bytes or truncated.
 #
-#   HF_TOKEN      picked up automatically by the hub client for gated repos
+#   HF_TOKEN      used by every backend (Hugging Face rate-limits anonymous
+#                 downloads from datacenter IPs). Also accepted under the names
+#                 HUGGING_FACE_HUB_TOKEN, HUGGINGFACE_HUB_TOKEN, HUGGINGFACE_TOKEN,
+#                 HF_API_TOKEN, HF_HUB_TOKEN.
 #   HFGET_DRY=1   print what would be done and exit
 set -o pipefail
 url="$1"; dest="$2"
+for v in HF_TOKEN HUGGING_FACE_HUB_TOKEN HUGGINGFACE_HUB_TOKEN HUGGINGFACE_TOKEN HF_API_TOKEN HF_HUB_TOKEN; do
+    if [ -n "${!v}" ]; then export HF_TOKEN="${!v}"; HF_TOKEN_FROM="$v"; break; fi
+done
+echo "hfget: token: ${HF_TOKEN_FROM:-none} $( [ -n "$HF_TOKEN" ] && echo "(${HF_TOKEN:0:6}…, ${#HF_TOKEN} chars)" )"
 if [ -z "$url" ] || [ -z "$dest" ]; then echo "usage: hfget <url> <dest-file>" >&2; exit 2; fi
 mkdir -p "$(dirname "$dest")"
 # a 0-byte leftover from an earlier failed attempt is not a partial download

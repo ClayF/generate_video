@@ -685,8 +685,38 @@ def _module_version(name):
         return f"missing ({type(e).__name__})"
 
 
+HF_TOKEN_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HUGGINGFACE_HUB_TOKEN", "HUGGINGFACE_TOKEN", "HF_API_TOKEN", "HF_HUB_TOKEN")
+
+
+def hf_token_env():
+    """Name of the first Hugging Face token variable that is set, and a masked value."""
+    for v in HF_TOKEN_VARS:
+        val = os.getenv(v)
+        if val:
+            return v, f"{val[:6]}… ({len(val)} chars)"
+    return None, None
+
+
+def _egress_probe_auth(url="https://huggingface.co/api/whoami-v2"):
+    """Does the token work? whoami answers 200 with a valid token, 401 without."""
+    name, _ = hf_token_env()
+    if not name:
+        return "no token variable set"
+    try:
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {os.getenv(name)}"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            who = json.loads(r.read().decode("utf-8", "replace"))
+            return f"HTTP {r.status} as {who.get('name', '?')}"
+    except urllib.error.HTTPError as e:
+        return f"HTTP {e.code} (token rejected)" if e.code in (401, 403) else f"HTTP {e.code}"
+    except Exception as e:
+        return f"FAILED: {type(e).__name__}: {e}"
+
+
 def diagnostics():
+    tok_name, tok_masked = hf_token_env()
     info = {
+        "hf_token": {"variable": tok_name, "value": tok_masked, "whoami": _egress_probe_auth()},
         "build_commit": (_read("/build-commit") or "unknown").strip(),
         "build_date": (_read("/build-date") or "unknown").strip(),
         "env": {k: os.getenv(k) for k in ("PROMPT_LLM_URL", "PROMPT_MMPROJ_URL", "PROMPT_LLM_AUTO_DOWNLOAD",
@@ -728,7 +758,11 @@ def download_prompt_model():
             results.append({"file": dest, "status": "present", "bytes": os.path.getsize(dest)})
             continue
         logger.info(f"Downloading {url} -> {dest}")
-        proc = subprocess.run([hfget, url, dest], capture_output=True, text=True)
+        env = dict(os.environ)
+        tok_name, _ = hf_token_env()
+        if tok_name:
+            env["HF_TOKEN"] = os.environ[tok_name]
+        proc = subprocess.run([hfget, url, dest], capture_output=True, text=True, env=env)
         out = (proc.stdout or "") + (proc.stderr or "")
         for line in out.splitlines():
             logger.info(f"hfget: {line}")
