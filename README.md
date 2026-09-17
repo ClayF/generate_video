@@ -190,7 +190,7 @@ The `input` object must contain the following fields. Images can be input using 
 | --- | --- | --- | --- | --- |
 | `prompt_expansion` | `boolean` or `object` | No | `false` | `true` turns expansion on with the worker defaults; an object lets you tune it (fields below). `expand_prompt: true` is accepted as a shorthand. |
 | `prompt_expansion.language` | `string` | No | `zh` | Output language of the rewritten prompt: `zh`, `en` or `auto`. Wan2.2 follows Chinese prompts noticeably better, which is why `zh` is the default. |
-| `prompt_expansion.model` | `string` | No | bundled GGUF | `Local: LLM/<file>.gguf` (or just the filename) for a local model, or a DashScope model name such as `qwen3.7-plus` (needs `DASHSCOPE_API_KEY` on the endpoint). |
+| `prompt_expansion.model` | `string` | No | first local Qwen GGUF | A local GGUF by filename, `LLM/<file>.gguf` or `/runpod-volume/LLM/<file>.gguf`, or a DashScope model name such as `qwen3.7-plus` (needs `DASHSCOPE_API_KEY` on the endpoint). |
 | `prompt_expansion.device` | `string` | No | `GPU` | `GPU` or `CPU` for local GGUF inference. |
 | `prompt_expansion.mmproj` | `string` | No | `(Auto-detect)` | mmproj selection for local models. |
 | `prompt_expansion.max_retries` | `integer` | No | `3` | Retry budget for cloud models (1-10). |
@@ -433,7 +433,17 @@ Wan2.2 responds much better to long, concrete prompts than to a few words, and i
 
 *   `new_Wan22_expand_api.json` and `new_Wan22_flf2v_expand_api.json` are the base workflows plus nodes **900** and **901**; node **135**'s `positive_prompt` becomes a link instead of a literal string. Regenerate them after editing the base workflows with `python tools/build_expand_workflows.py` (`--check` in CI).
 *   `expand_only: true` queues only nodes 244/171/235/236/900/901, so no diffusion model is touched. A preview on a warm worker takes a few seconds on the GPU.
-*   The bundled model is **Qwen3-VL-8B-Instruct (Q8_0)** from [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) with its mmproj in `/ComfyUI/models/LLM/`, run through the CUDA build of `llama-cpp-python` ([JamePeng fork](https://github.com/JamePeng/llama-cpp-python), which is needed for Qwen3-VL vision). The node unloads the LLM as soon as it has answered, so it does not compete with Wan2.2 for VRAM during sampling.
+*   The default model is **Qwen3-VL-8B-Instruct (Q8_0)** from [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF) plus its mmproj (~9.4 GB together), run through the CUDA build of `llama-cpp-python` ([JamePeng fork](https://github.com/JamePeng/llama-cpp-python), which is needed for Qwen3-VL vision). The node unloads the LLM as soon as it has answered, so it does not compete with Wan2.2 for VRAM during sampling.
+
+### Where the model lives
+
+The 9 GB download does not fit inside RunPod's build time limit, so it is **not baked into the image**. Instead `entrypoint.sh` fetches it on the first start of a worker:
+
+1. **Network Volume (recommended).** Attach a volume to the endpoint. On the first cold start the worker downloads the model and mmproj into `/runpod-volume/LLM/` (resumable, ~2–5 min); every later start finds them there. You can also copy the two files onto the volume yourself from a pod.
+2. **No volume.** The worker downloads into its own container disk on every cold start and logs a warning — it works, but it is slow and wasteful.
+3. **Bake it in.** If you build the image yourself (no build timeout), `docker build --build-arg BAKE_PROMPT_LLM=1 …` downloads it at build time into `/ComfyUI/models/LLM/`.
+
+Set `PROMPT_LLM_AUTO_DOWNLOAD=0` on the endpoint to skip the download (cloud models only, or you manage the files yourself).
 
 ### Endpoint configuration
 
@@ -441,10 +451,12 @@ Wan2.2 responds much better to long, concrete prompts than to a few words, and i
 | --- | --- | --- |
 | `PROMPT_EXPANSION_LANGUAGE` | `zh` | Default output language when a request does not set one. |
 | `PROMPT_EXPANSION_DEVICE` | `GPU` | Default device for local GGUF inference. |
-| `PROMPT_EXPANSION_MODEL` | first Qwen GGUF in `models/LLM` | Default model (`LLM/<file>.gguf` or a DashScope model name). |
+| `PROMPT_EXPANSION_MODEL` | first Qwen GGUF in `models/LLM`, then `/runpod-volume/LLM` | Default model (`<file>.gguf`, `LLM/<file>.gguf`, `/runpod-volume/LLM/<file>.gguf` or a DashScope model name). |
+| `PROMPT_LLM_URL` / `PROMPT_MMPROJ_URL` | Qwen3-VL-8B-Instruct Q8_0 | What `entrypoint.sh` downloads when no model is present. Override to use another quant or Qwen family (keep the model and its mmproj together, and keep a family prefix such as `Qwen3VL` in the filename so mmproj auto-detect works). |
+| `PROMPT_LLM_AUTO_DOWNLOAD` | `1` | `0` disables the start-up download. |
 | `DASHSCOPE_API_KEY` | – | Written to the node's `api_key.txt` at start-up so cloud Qwen models can be used as `prompt_expansion.model`. |
 
-Docker build arguments `PROMPT_LLM_URL` / `PROMPT_MMPROJ_URL` swap the bundled model (keep the model and its mmproj in the same folder, and keep a family prefix such as `Qwen3VL` in the filename so mmproj auto-detect works). `LLAMA_CPP_PYTHON_RELEASE` / `LLAMA_CPP_PYTHON_WHEEL_VERSION` pin the prebuilt CUDA wheel. Extra GGUFs dropped into `/LLM/` on a Network Volume are also visible to the node; select them with `prompt_expansion.model: "/runpod-volume/LLM/<file>.gguf"`.
+Docker build arguments: `BAKE_PROMPT_LLM=1` downloads the model at build time; `LLAMA_CPP_PYTHON_RELEASE` / `LLAMA_CPP_PYTHON_WHEEL_VERSION` pin the prebuilt CUDA wheel. Extra GGUFs dropped into `/LLM/` on a Network Volume are visible to the node; select them with `prompt_expansion.model: "<file>.gguf"` (the handler finds it) or the full `/runpod-volume/LLM/<file>.gguf`.
 
 ### Notes
 

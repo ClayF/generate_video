@@ -54,6 +54,10 @@ EXPAND_ONLY_NODES = (NODE_START_IMAGE, NODE_RESIZE_START, NODE_WIDTH, NODE_HEIGH
 # input.prompt_expansion or per endpoint via environment variables.
 # ---------------------------------------------------------------------------
 LLM_DIR = os.getenv("PROMPT_EXPANSION_LLM_DIR", "/ComfyUI/models/LLM")
+# Second place the node looks (extra_model_paths.yaml lists it too): a Network
+# Volume, which is where entrypoint.sh downloads the model on first start so the
+# Docker build does not have to carry ~9 GB.
+VOLUME_LLM_DIR = os.getenv("PROMPT_EXPANSION_VOLUME_LLM_DIR", "/runpod-volume/LLM")
 EXPANSION_LANGUAGES = ("auto", "zh", "en")
 EXPANSION_DEVICES = ("GPU", "CPU")
 MULTIMODAL_NODE_DIR = os.getenv("MULTIMODAL_NODE_DIR", "/ComfyUI/custom_nodes/ComfyUI-MultiModal-Prompt-Nodes")
@@ -259,19 +263,35 @@ def load_workflow(workflow_path):
 # ---------------------------------------------------------------------------
 # Prompt expansion helpers
 # ---------------------------------------------------------------------------
-def list_local_llm_models(llm_dir=None):
-    """GGUF files the Wan Video Prompt Generator would list as 'Local: LLM/<file>'."""
+def _node_model_name(path, models_dir):
+    """Mirror the node's to_models_relative_path(): relative to ComfyUI/models when
+    the file lives there, otherwise the absolute path (Network Volume)."""
+    path = os.path.normpath(path)
+    models_dir = os.path.normpath(models_dir)
+    if path.startswith(models_dir + os.sep):
+        return os.path.relpath(path, models_dir).replace(os.sep, "/")
+    return path.replace(os.sep, "/")
+
+
+def list_local_llm_models(llm_dir=None, extra_dirs=None):
+    """GGUF files the Wan Video Prompt Generator would list as 'Local: <name>'.
+
+    Image models come out as 'LLM/<file>', Network Volume models as
+    '/runpod-volume/LLM/<file>' — exactly the combo values the node builds.
+    """
     llm_dir = llm_dir or LLM_DIR
-    if not os.path.isdir(llm_dir):
-        return []
+    dirs = [llm_dir] + list(extra_dirs if extra_dirs is not None else [VOLUME_LLM_DIR])
+    models_dir = os.path.dirname(os.path.normpath(llm_dir))
     names = []
-    for root, _, files in os.walk(llm_dir):
-        for f in files:
-            lower = f.lower()
-            if not lower.endswith(".gguf") or lower.startswith("mmproj") or "qwen" not in lower:
-                continue
-            rel = os.path.relpath(os.path.join(root, f), os.path.dirname(llm_dir.rstrip("/")))
-            names.append(rel.replace(os.sep, "/"))
+    for d in dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        for root, _, files in os.walk(d):
+            for f in files:
+                lower = f.lower()
+                if not lower.endswith(".gguf") or lower.startswith("mmproj") or "qwen" not in lower:
+                    continue
+                names.append(_node_model_name(os.path.join(root, f), models_dir))
     return sorted(set(names), key=str.lower)
 
 
@@ -288,15 +308,21 @@ def default_llm_model(llm_dir=None):
 def normalize_llm_model(value):
     """Turn user friendly spellings into the exact combo value the node expects.
 
-    "Local: LLM/x.gguf"  -> unchanged
-    "LLM/x.gguf" / "x.gguf" -> "Local: LLM/x.gguf"
-    "qwen3.7-plus"        -> unchanged (DashScope cloud model)
+    "Local: LLM/x.gguf"          -> unchanged
+    "LLM/x.gguf"                 -> "Local: LLM/x.gguf"
+    "/runpod-volume/LLM/x.gguf"  -> "Local: /runpod-volume/LLM/x.gguf"
+    "x.gguf"                     -> whichever discovered model has that filename,
+                                    else "Local: LLM/x.gguf"
+    "qwen3.7-plus"               -> unchanged (DashScope cloud model)
     """
     value = str(value).strip()
     if value.startswith("Local: "):
         return value
     if value.lower().endswith(".gguf"):
         if "/" not in value:
+            for name in list_local_llm_models():
+                if os.path.basename(name).lower() == value.lower():
+                    return f"Local: {name}"
             value = f"{os.path.basename(LLM_DIR.rstrip('/'))}/{value}"
         return f"Local: {value}"
     return value
@@ -338,9 +364,10 @@ def resolve_prompt_expansion(job_input):
     model = raw.get("model")
     model = normalize_llm_model(model) if model else default_llm_model()
     if not model:
-        raise JobError(f"No local prompt model found in {LLM_DIR} and no prompt_expansion.model / "
-                       "PROMPT_EXPANSION_MODEL given. Add a Qwen GGUF (plus mmproj) to the LLM folder or "
-                       "pass a DashScope model name.")
+        raise JobError(f"No local prompt model found in {LLM_DIR} or {VOLUME_LLM_DIR} and no "
+                       "prompt_expansion.model / PROMPT_EXPANSION_MODEL given. Let entrypoint.sh download "
+                       "the bundled model (needs a Network Volume or PROMPT_LLM_URL), drop a Qwen GGUF plus "
+                       "mmproj in the LLM folder, or pass a DashScope model name.")
     if not model.startswith("Local: "):
         key_path = os.path.join(MULTIMODAL_NODE_DIR, "api_key.txt")
         if not os.path.isfile(key_path) or not open(key_path, encoding="utf-8").read().strip():

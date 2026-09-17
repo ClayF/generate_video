@@ -68,16 +68,20 @@ RUN PYTAG=$(python -c 'import sys; print("cp%d%d" % sys.version_info[:2])') && \
     pip install "https://github.com/JamePeng/llama-cpp-python/releases/download/${LLAMA_CPP_PYTHON_RELEASE}/llama_cpp_python-${LLAMA_CPP_PYTHON_WHEEL_VERSION}-${PYTAG}-${PYTAG}-linux_x86_64.whl" && \
     python -c "import llama_cpp; print('llama-cpp-python', llama_cpp.__version__)"
 
-# Local vision LLM for prompt expansion (model + matching mmproj must sit in the
-# same folder; the filename must start with a family prefix such as Qwen3VL so
-# the node's mmproj auto-detect works). Override with --build-arg to use a
-# smaller quant or a different Qwen family.
-ARG PROMPT_LLM_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf
-ARG PROMPT_MMPROJ_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
-# -nv (not -q) so a failed download shows the HTTP status in the build log.
+# Local vision LLM for prompt expansion (Qwen3-VL-8B-Instruct Q8_0 + mmproj,
+# ~9.4 GB). It is NOT baked into the image by default because the download
+# pushes RunPod's build past its time limit; entrypoint.sh fetches it into
+# /runpod-volume/LLM on the first start instead (see PROMPT_LLM_URL below).
+# To bake it in anyway (own registry, no build timeout):
+#   --build-arg BAKE_PROMPT_LLM=1
+ARG BAKE_PROMPT_LLM=0
+ENV PROMPT_LLM_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q8_0.gguf \
+    PROMPT_MMPROJ_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
 RUN mkdir -p /ComfyUI/models/LLM && \
-    wget -nv --tries=3 "${PROMPT_LLM_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_LLM_URL}")" && \
-    wget -nv --tries=3 "${PROMPT_MMPROJ_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_MMPROJ_URL}")"
+    if [ "$BAKE_PROMPT_LLM" = "1" ]; then \
+        wget -nv --tries=3 "${PROMPT_LLM_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_LLM_URL}")" && \
+        wget -nv --tries=3 "${PROMPT_MMPROJ_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_MMPROJ_URL}")"; \
+    fi
 
 # Tiny output node that publishes the expanded prompt to the job history
 COPY custom_nodes/generate_video_prompt_nodes /ComfyUI/custom_nodes/generate_video_prompt_nodes

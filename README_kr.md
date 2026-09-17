@@ -160,7 +160,7 @@ print(f"배치 처리 완료: {batch_result['successful']}/{batch_result['total_
 | --- | --- | --- | --- | --- |
 | `prompt_expansion` | `boolean` 또는 `object` | 아니오 | `false` | `true`이면 워커 기본값으로 프롬프트 확장을 켭니다. 객체로 세부 설정을 지정할 수 있습니다 (아래 필드). `expand_prompt: true`도 같은 의미입니다. |
 | `prompt_expansion.language` | `string` | 아니오 | `zh` | 확장된 프롬프트의 언어: `zh`, `en`, `auto`. Wan2.2는 중국어 프롬프트를 훨씬 잘 따르므로 `zh`가 기본값입니다. |
-| `prompt_expansion.model` | `string` | 아니오 | 내장 GGUF | 로컬 모델은 `Local: LLM/<파일>.gguf` (또는 파일명만), DashScope 클라우드 모델은 `qwen3.7-plus` 같은 이름 (엔드포인트에 `DASHSCOPE_API_KEY` 필요). |
+| `prompt_expansion.model` | `string` | 아니오 | 첫 번째 로컬 Qwen GGUF | 로컬 모델은 파일명, `LLM/<파일>.gguf` 또는 `/runpod-volume/LLM/<파일>.gguf`, DashScope 클라우드 모델은 `qwen3.7-plus` 같은 이름 (엔드포인트에 `DASHSCOPE_API_KEY` 필요). |
 | `prompt_expansion.device` | `string` | 아니오 | `GPU` | 로컬 GGUF 추론 장치: `GPU` 또는 `CPU`. |
 | `prompt_expansion.mmproj` | `string` | 아니오 | `(Auto-detect)` | 로컬 모델의 mmproj 선택. |
 | `prompt_expansion.max_retries` | `integer` | 아니오 | `3` | 클라우드 모델 재시도 횟수 (1-10). |
@@ -394,7 +394,7 @@ Wan2.2는 짧은 단어 몇 개보다 길고 구체적인 프롬프트, 특히 �
 
 *   `new_Wan22_expand_api.json`, `new_Wan22_flf2v_expand_api.json`은 기본 워크플로우에 **900**, **901** 노드를 추가한 것이며, **135** 노드의 `positive_prompt`는 문자열 대신 링크가 됩니다. 기본 워크플로우를 수정한 뒤에는 `python tools/build_expand_workflows.py`로 다시 생성하세요 (`--check`로 검증).
 *   `expand_only: true`이면 244/171/235/236/900/901 노드만 실행하므로 디퓨전 모델은 전혀 로드되지 않습니다. 워밍업된 워커에서는 GPU 기준 수 초면 끝납니다.
-*   내장 모델은 **Qwen3-VL-8B-Instruct (Q8_0)**와 mmproj이며 `/ComfyUI/models/LLM/`에 있습니다. Qwen3-VL 비전 지원을 위해 `llama-cpp-python`의 CUDA 빌드([JamePeng 포크](https://github.com/JamePeng/llama-cpp-python))를 사용합니다. 노드는 답변 직후 LLM을 언로드하므로 샘플링 중 Wan2.2와 VRAM을 두고 경쟁하지 않습니다.
+*   기본 모델은 [Qwen/Qwen3-VL-8B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF)의 **Qwen3-VL-8B-Instruct (Q8_0)**와 mmproj(합쳐서 약 9.4 GB)입니다. RunPod 빌드 시간 제한 때문에 이미지에 포함하지 않고, `entrypoint.sh`가 첫 시작 때 `/runpod-volume/LLM/`(네트워크 볼륨 권장, 없으면 컨테이너 디스크)에 내려받습니다. 직접 빌드한다면 `--build-arg BAKE_PROMPT_LLM=1`로 이미지에 포함할 수 있습니다. Qwen3-VL 비전 지원을 위해 `llama-cpp-python`의 CUDA 빌드([JamePeng 포크](https://github.com/JamePeng/llama-cpp-python))를 사용합니다. 노드는 답변 직후 LLM을 언로드하므로 샘플링 중 Wan2.2와 VRAM을 두고 경쟁하지 않습니다.
 
 ### 엔드포인트 설정
 
@@ -402,10 +402,12 @@ Wan2.2는 짧은 단어 몇 개보다 길고 구체적인 프롬프트, 특히 �
 | --- | --- | --- |
 | `PROMPT_EXPANSION_LANGUAGE` | `zh` | 요청에 언어가 없을 때의 기본 출력 언어 |
 | `PROMPT_EXPANSION_DEVICE` | `GPU` | 로컬 GGUF 추론 기본 장치 |
-| `PROMPT_EXPANSION_MODEL` | `models/LLM`의 첫 번째 Qwen GGUF | 기본 모델 (`LLM/<파일>.gguf` 또는 DashScope 모델 이름) |
+| `PROMPT_EXPANSION_MODEL` | `models/LLM`, 그다음 `/runpod-volume/LLM`의 첫 번째 Qwen GGUF | 기본 모델 (`<파일>.gguf`, `LLM/<파일>.gguf`, `/runpod-volume/LLM/<파일>.gguf` 또는 DashScope 모델 이름) |
+| `PROMPT_LLM_URL` / `PROMPT_MMPROJ_URL` | Qwen3-VL-8B-Instruct Q8_0 | 모델이 없을 때 `entrypoint.sh`가 내려받는 파일 |
+| `PROMPT_LLM_AUTO_DOWNLOAD` | `1` | `0`이면 시작 시 다운로드 생략 |
 | `DASHSCOPE_API_KEY` | – | 시작 시 노드의 `api_key.txt`에 기록되어 클라우드 Qwen 모델을 `prompt_expansion.model`로 사용할 수 있게 합니다 |
 
-Docker 빌드 인자 `PROMPT_LLM_URL` / `PROMPT_MMPROJ_URL`로 내장 모델을 바꿀 수 있습니다 (모델과 mmproj는 같은 폴더에, 파일명에는 mmproj 자동 감지를 위해 `Qwen3VL` 같은 패밀리 접두사 유지). `LLAMA_CPP_PYTHON_RELEASE` / `LLAMA_CPP_PYTHON_WHEEL_VERSION`은 프리빌드 CUDA 휠을 고정합니다. 네트워크 볼륨의 `/LLM/`에 넣은 GGUF도 노드에서 보이며 `prompt_expansion.model: "/runpod-volume/LLM/<파일>.gguf"`로 선택합니다.
+엔드포인트 환경 변수 `PROMPT_LLM_URL` / `PROMPT_MMPROJ_URL`로 모델을 바꿀 수 있습니다 (모델과 mmproj는 같은 폴더에, 파일명에는 mmproj 자동 감지를 위해 `Qwen3VL` 같은 패밀리 접두사 유지). 빌드 인자 `BAKE_PROMPT_LLM=1`은 빌드 시 모델을 이미지에 포함합니다. `LLAMA_CPP_PYTHON_RELEASE` / `LLAMA_CPP_PYTHON_WHEEL_VERSION`은 프리빌드 CUDA 휠을 고정합니다. 네트워크 볼륨의 `/LLM/`에 넣은 GGUF도 노드에서 보이며 `prompt_expansion.model: "/runpod-volume/LLM/<파일>.gguf"`로 선택합니다.
 
 ### 참고
 

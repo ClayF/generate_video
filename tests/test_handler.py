@@ -55,6 +55,7 @@ class PromptExpansionSettings(unittest.TestCase):
         os.makedirs(self.node_dir)
         self.patches = [
             mock.patch.object(handler, "LLM_DIR", self.llm_dir),
+            mock.patch.object(handler, "VOLUME_LLM_DIR", os.path.join(self.tmp.name, "no-volume")),
             mock.patch.object(handler, "MULTIMODAL_NODE_DIR", self.node_dir),
             mock.patch.dict(os.environ, {}, clear=False),
         ]
@@ -84,6 +85,24 @@ class PromptExpansionSettings(unittest.TestCase):
     def test_local_discovery_skips_mmproj_and_non_qwen(self):
         self.assertEqual(handler.list_local_llm_models(self.llm_dir), ["LLM/Qwen3VL-8B-Instruct-Q8_0.gguf"])
 
+    def test_volume_models_are_listed_by_absolute_path_like_the_node(self):
+        # outside the models dir, like a real /runpod-volume mount
+        vol_root = tempfile.TemporaryDirectory(); self.addCleanup(vol_root.cleanup)
+        vol = os.path.join(vol_root.name, "LLM")
+        os.makedirs(vol)
+        open(os.path.join(vol, "Qwen3VL-4B-Instruct-Q4_K_M.gguf"), "wb").close()
+        with mock.patch.object(handler, "VOLUME_LLM_DIR", vol):
+            names = handler.list_local_llm_models()
+            self.assertEqual(names, [f"{vol}/Qwen3VL-4B-Instruct-Q4_K_M.gguf", "LLM/Qwen3VL-8B-Instruct-Q8_0.gguf"])
+            # a bare filename resolves to wherever the file actually is
+            self.assertEqual(handler.normalize_llm_model("Qwen3VL-4B-Instruct-Q4_K_M.gguf"), f"Local: {vol}/Qwen3VL-4B-Instruct-Q4_K_M.gguf")
+            self.assertEqual(handler.normalize_llm_model("Qwen3VL-8B-Instruct-Q8_0.gguf"), "Local: LLM/Qwen3VL-8B-Instruct-Q8_0.gguf")
+        # image dir empty, only the volume has a model -> it becomes the default
+        for f in os.listdir(self.llm_dir):
+            os.remove(os.path.join(self.llm_dir, f))
+        with mock.patch.object(handler, "VOLUME_LLM_DIR", vol):
+            self.assertEqual(handler.default_llm_model(), f"Local: {vol}/Qwen3VL-4B-Instruct-Q4_K_M.gguf")
+
     def test_object_form_and_normalisation(self):
         e = handler.resolve_prompt_expansion({"prompt_expansion": {
             "language": "EN", "device": "cpu", "model": "Qwen3VL-8B-Instruct-Q8_0.gguf", "max_retries": 99}})
@@ -93,6 +112,8 @@ class PromptExpansionSettings(unittest.TestCase):
         self.assertEqual(e["max_retries"], 10)
         self.assertEqual(handler.normalize_llm_model("Local: LLM/x.gguf"), "Local: LLM/x.gguf")
         self.assertEqual(handler.normalize_llm_model("sub/x.gguf"), "Local: sub/x.gguf")
+        self.assertEqual(handler.normalize_llm_model("/runpod-volume/LLM/x.gguf"), "Local: /runpod-volume/LLM/x.gguf")
+        self.assertEqual(handler.normalize_llm_model("unknown.gguf"), "Local: LLM/unknown.gguf")
         self.assertEqual(handler.normalize_llm_model("qwen3.7-plus"), "qwen3.7-plus")
 
     def test_env_overrides(self):
