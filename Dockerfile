@@ -3,7 +3,14 @@
 # FROM wlsdml1114/multitalk-base:1.7 as runtime
 FROM wlsdml1114/engui_genai-base_blackwell:1.1 as runtime
 
-RUN pip install -U "huggingface_hub[hf_transfer]"
+# Model downloads: the hub client with its parallel Xet / hf_transfer backends
+# (many connections per file) plus aria2c as a fallback — several times faster
+# than the single-stream wget the image used to rely on. See hfget.sh.
+RUN pip install -U "huggingface_hub[hf_transfer,hf_xet]" && \
+    (apt-get update && apt-get install -y --no-install-recommends aria2 && rm -rf /var/lib/apt/lists/*) \
+    || echo "aria2 not installed (apt unavailable); hfget will use the hub client / wget"
+COPY hfget.sh /usr/local/bin/hfget
+RUN chmod +x /usr/local/bin/hfget
 RUN pip install runpod websocket-client
 
 WORKDIR /
@@ -79,22 +86,22 @@ ENV PROMPT_LLM_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve
     PROMPT_MMPROJ_URL=https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
 RUN mkdir -p /ComfyUI/models/LLM && \
     if [ "$BAKE_PROMPT_LLM" = "1" ]; then \
-        wget -nv --tries=3 "${PROMPT_LLM_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_LLM_URL}")" && \
-        wget -nv --tries=3 "${PROMPT_MMPROJ_URL}" -O "/ComfyUI/models/LLM/$(basename "${PROMPT_MMPROJ_URL}")"; \
+        hfget "${PROMPT_LLM_URL}" "/ComfyUI/models/LLM/$(basename "${PROMPT_LLM_URL}")" && \
+        hfget "${PROMPT_MMPROJ_URL}" "/ComfyUI/models/LLM/$(basename "${PROMPT_MMPROJ_URL}")"; \
     fi
 
 # Tiny output node that publishes the expanded prompt to the job history
 COPY custom_nodes/generate_video_prompt_nodes /ComfyUI/custom_nodes/generate_video_prompt_nodes
 
-RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/I2V/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors -O /ComfyUI/models/diffusion_models/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors
-RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/I2V/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors -O /ComfyUI/models/diffusion_models/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors
+RUN hfget https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/I2V/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors /ComfyUI/models/diffusion_models/Wan2_2-I2V-A14B-HIGH_fp8_e4m3fn_scaled_KJ.safetensors
+RUN hfget https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/I2V/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors /ComfyUI/models/diffusion_models/Wan2_2-I2V-A14B-LOW_fp8_e4m3fn_scaled_KJ.safetensors
 
-RUN wget -q https://huggingface.co/lightx2v/Wan2.2-Lightning/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors -O /ComfyUI/models/loras/high_noise_model.safetensors
-RUN wget -q https://huggingface.co/lightx2v/Wan2.2-Lightning/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors -O /ComfyUI/models/loras/low_noise_model.safetensors
+RUN hfget https://huggingface.co/lightx2v/Wan2.2-Lightning/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors /ComfyUI/models/loras/high_noise_model.safetensors
+RUN hfget https://huggingface.co/lightx2v/Wan2.2-Lightning/resolve/main/Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors /ComfyUI/models/loras/low_noise_model.safetensors
 
-RUN wget -q https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors -O /ComfyUI/models/clip_vision/clip_vision_h.safetensors
-RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors -O /ComfyUI/models/text_encoders/umt5-xxl-enc-bf16.safetensors
-RUN wget -q https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors -O /ComfyUI/models/vae/Wan2_1_VAE_bf16.safetensors
+RUN hfget https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors /ComfyUI/models/clip_vision/clip_vision_h.safetensors
+RUN hfget https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors /ComfyUI/models/text_encoders/umt5-xxl-enc-bf16.safetensors
+RUN hfget https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors /ComfyUI/models/vae/Wan2_1_VAE_bf16.safetensors
 
 COPY . .
 COPY extra_model_paths.yaml /ComfyUI/extra_model_paths.yaml

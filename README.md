@@ -445,6 +445,8 @@ The 9 GB download does not fit inside RunPod's build time limit, so it is **not 
 
 Set `PROMPT_LLM_AUTO_DOWNLOAD=0` on the endpoint to skip the download (cloud models only, or you manage the files yourself).
 
+All model downloads — at build time and at start-up — go through `hfget.sh`, which uses the Hugging Face hub client with its parallel Xet / `hf_transfer` backends and falls back to `aria2c` (16 connections) and then `wget`. Set `HF_TOKEN` on the endpoint (or as a build arg) for gated repos.
+
 ### Endpoint configuration
 
 | Variable | Default | Purpose |

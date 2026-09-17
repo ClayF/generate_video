@@ -40,13 +40,12 @@ if [ "${PROMPT_LLM_AUTO_DOWNLOAD:-1}" != "0" ] && [ -n "$PROMPT_LLM_URL" ] && ! 
         [ -n "$url" ] || continue
         f="$LLM_DEST/$(basename "$url")"
         echo "Fetching prompt-expansion model: $url -> $f"
-        # download to .part (resumable with -c) and rename only when complete, so a
-        # start that gets interrupted never leaves a truncated .gguf behind
-        if wget -nv -c --tries=5 "$url" -O "$f.part"; then
-            mv -f "$f.part" "$f"
-        else
+        # hfget stages next to the destination and only moves the file into place
+        # when complete, so an interrupted start never leaves a truncated .gguf
+        # behind and the next start resumes the download.
+        if ! hfget "$url" "$f"; then
             echo "WARNING: download failed for $url — prompt expansion will not work until it succeeds" \
-                 "(the worker still serves normal generations; the partial file is kept for resume)."
+                 "(the worker still serves normal generations)."
             break
         fi
     done
