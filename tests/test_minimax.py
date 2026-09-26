@@ -339,6 +339,45 @@ class HandlerEndToEnd(unittest.TestCase):
         self.assertEqual(out["steps"], 8)
         self.assertIn("199", self.sent[0])
 
+    def test_gui_default_8_steps_turns_turbo_on(self):
+        """The Wan GUI sends steps=8 by default; plain H3 at 8 steps is badly
+        under-sampled, so auto mode adds the turbo LoRA the template pairs with
+        low step counts."""
+        out = self.h.handler(self.payload())            # GUI_PAYLOAD carries steps 8
+        g = self.sent[0]
+        self.assertIn("199", g, "turbo LoRA chained in")
+        self.assertEqual(g["199"]["inputs"]["lora_name"], h3.DEFAULTS["turbo_lora"])
+        self.assertEqual(g["199"]["inputs"]["model"], ["101", 0], "after the user's LoRAs")
+        self.assertEqual(g["43"]["inputs"]["model"], ["199", 0])
+        self.assertEqual(out["turbo_reason"], "auto: 8 steps")
+
+    def test_enough_steps_or_explicit_off_keeps_turbo_out(self):
+        out = self.h.handler(self.payload(steps=20))
+        self.assertNotIn("199", self.sent[-1])
+        self.assertFalse(out["turbo"])
+        out = self.h.handler(self.payload(steps=6, turbo=False))
+        self.assertNotIn("199", self.sent[-1], "explicit false is respected")
+        self.assertEqual(out["turbo_reason"], "disabled")
+        out = self.h.handler(self.payload(steps=6, turbo="off"))
+        self.assertNotIn("199", self.sent[-1], "string flags from form fields work too")
+
+    def test_own_distill_lora_is_not_doubled(self):
+        os.rename(os.path.join(self.models, "loras", "style_a.safetensors"),
+                  os.path.join(self.models, "loras", "my_h3_lightning_4step.safetensors"))
+        out = self.h.handler(self.payload(lora_pairs=[{"high": "my_h3_lightning_4step.safetensors", "high_weight": 1}]))
+        self.assertNotIn("error", out, out)
+        self.assertNotIn("199", self.sent[-1])
+        self.assertIn("already using", out["turbo_reason"])
+
+    def test_auto_turbo_without_the_file_runs_plain_and_warns(self):
+        os.remove(os.path.join(self.models, "loras", h3.DEFAULTS["turbo_lora"]))
+        out = self.h.handler(self.payload())
+        self.assertNotIn("error", out, out)
+        self.assertNotIn("199", self.sent[-1])
+        self.assertTrue(any("turbo LoRA" in w for w in out.get("warnings", [])))
+        out = self.h.handler(self.payload(turbo=True))
+        self.assertIn("turbo LoRA", out["error"], "an explicit request still fails loudly")
+
     def test_missing_lora_names_whats_available(self):
         out = self.h.handler(self.payload(lora_pairs=[{"high": "nope.safetensors", "high_weight": 1}]))
         self.assertIn("nope.safetensors", out["error"])

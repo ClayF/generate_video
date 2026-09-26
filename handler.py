@@ -383,7 +383,7 @@ def resolve_models(job):
     return picked
 
 
-def resolve_lora_names(requested, turbo):
+def resolve_lora_names(requested, turbo, required=True):
     have = list_models("loras")
     out = []
     for name, strength in requested:
@@ -394,7 +394,7 @@ def resolve_lora_names(requested, turbo):
     turbo_name = None
     if turbo:
         turbo_name = h3.match_file(h3.DEFAULTS["turbo_lora"], have)
-        if not turbo_name:
+        if not turbo_name and required:
             raise _missing("turbo LoRA", h3.DEFAULTS["turbo_lora"], have)
     return out, turbo_name
 
@@ -524,19 +524,29 @@ def handler(job):
         if job_input.get("prompt_expansion"):
             warnings.append("prompt_expansion is not available on the MiniMax-H3 build; the prompt was used as written")
 
-        turbo = bool(job_input.get("turbo"))
         audio = job_input.get("audio", True) is not False
         steps = job_input.get("steps")
-        steps = int(steps) if steps not in (None, "") else (h3.DEFAULTS["turbo_steps"] if turbo else h3.DEFAULTS["steps"])
-        if steps < 1:
+        try:
+            steps = int(steps) if steps not in (None, "") else None
+        except (TypeError, ValueError):
+            raise JobError("steps must be a whole number")
+        if steps is not None and steps < 1:
             raise JobError("steps must be at least 1")
+        turbo, turbo_reason = h3.wants_turbo(job_input, steps, loras)
+        if steps is None:
+            steps = h3.DEFAULTS["turbo_steps"] if turbo else h3.DEFAULTS["steps"]
         try:
             seed = int(job_input.get("seed", 0)) % (2 ** 63)
         except (TypeError, ValueError):
             raise JobError("seed must be an integer")
 
         models = resolve_models(dict(job_input, audio=audio))
-        lora_names, turbo_name = resolve_lora_names(loras, turbo)
+        explicit_turbo = turbo_reason == "requested"
+        lora_names, turbo_name = resolve_lora_names(loras, turbo, required=explicit_turbo)
+        if turbo and not turbo_name:
+            # auto mode but the file isn't here: run plain and say so
+            warnings.append(f"turbo LoRA {h3.DEFAULTS['turbo_lora']} is not on this worker; ran {steps} steps without it "
+                            f"— expect a soft result below ~20 steps")
 
         first = stage_image(job_input, "image", task_id)
         last = stage_image(job_input, "end_image", task_id)
@@ -551,7 +561,7 @@ def handler(job):
         )
         mode = "flf2va" if first and last else "i2va" if first else "t2va"
         logger.info(f"MiniMax-H3 {mode}: {width}x{height}, {frames} frames, {steps} steps, unet={models['unet']}, "
-                    f"loras={[n for n, _ in lora_names]}{', turbo' if turbo_name else ''}")
+                    f"loras={[n for n, _ in lora_names]}, turbo={turbo_name or 'off'} ({turbo_reason})")
 
         ws = wait_for_comfyui()
         try:
@@ -567,8 +577,8 @@ def handler(job):
             "model": models["unet"], "loras": [{"name": n, "strength": s} for n, s in lora_names],
             "audio": audio,
         }
-        if turbo_name:
-            result["turbo"] = turbo_name
+        result["turbo"] = turbo_name or False
+        result["turbo_reason"] = turbo_reason
         if warnings:
             result["warnings"] = warnings
         return result

@@ -61,6 +61,38 @@ N = {  # fixed node ids — stable so logs and errors are readable
 LORA_BASE_ID = 100           # user LoRAs are 100, 101, …; turbo is 199
 
 
+AUTO_TURBO_MAX_STEPS = int(os.getenv("MINIMAX_AUTO_TURBO_MAX_STEPS", "10"))
+_DISTILL_HINT = re.compile(r"(turbo|lightx2v|lightning|distill|\d+\s*-?\s*steps?)", re.I)
+
+
+def wants_turbo(job, steps, loras):
+    """Whether to add the turbo LoRA.
+
+    Explicit wins: {"turbo": true|false}. Otherwise ("auto", the default) it goes
+    on when the request asks for few steps — H3 needs ~20 steps without it, and
+    the Wan GUI sends 8 by default, which would otherwise come back as an
+    under-sampled smear. It stays off if the caller already chose a distill
+    LoRA of their own, so two turbo adapters are never stacked.
+
+    Returns (on, reason) so the decision can be reported back.
+    """
+    t = job.get("turbo", "auto")
+    if isinstance(t, str) and t.strip().lower() in ("true", "1", "yes", "on"):
+        t = True
+    elif isinstance(t, str) and t.strip().lower() in ("false", "0", "no", "off"):
+        t = False
+    if t is True:
+        return True, "requested"
+    if t is False:
+        return False, "disabled"
+    own = [n for n, _ in loras if _DISTILL_HINT.search(os.path.basename(n))]
+    if own:
+        return False, f"auto: already using {own[0]}"
+    if steps is not None and steps <= AUTO_TURBO_MAX_STEPS:
+        return True, f"auto: {steps} steps"
+    return False, "auto: enough steps"
+
+
 class RequestError(ValueError):
     """A request the graph cannot be built from (reported back to the client)."""
 

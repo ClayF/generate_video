@@ -15,6 +15,16 @@ hfget.sh              fast Hugging Face downloader
 tests/test_minimax.py offline tests (no GPU, no ComfyUI)
 ```
 
+## Licence and where the endpoint may run
+
+The weights are fetched by your worker, so your use falls under the
+[MiniMax H3 Community License Agreement](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE),
+whose territory **excludes the European Union, the United Kingdom, the Republic
+of Korea and the United States**. RunPod schedules serverless workers across
+its data centres by default, including US and EU ones — restrict the endpoint's
+allowed data centres to regions outside those (for example Canada) so no worker
+ever loads the model somewhere the licence doesn't cover.
+
 ## The graph
 
 Straight from `Comfy-Org/workflow_templates` → `templates/video_minimax_h3_i2v.json`:
@@ -25,7 +35,7 @@ video VAE → `MiniMaxH3ImageToVideo` · `RandomNoise` + `KSamplerSelect (res_mu
 
 Additions: any number of LoRAs chained after the diffusion model; first and last
 frame are both optional, so the same graph does text-to-video, image-to-video
-and first+last-frame; the template's optional 8-step turbo LoRA is `turbo: true`.
+and first+last-frame; the template's optional 8-step turbo LoRA is `turbo` (auto by default, see below).
 
 ## Request
 
@@ -39,7 +49,7 @@ Everything the Wan GUI sends is accepted:
 | `width`, `height` | rounded to multiples of 32 |
 | `length` | **the GUI's frames at 16 fps**, converted through seconds: 81 → 124 H3 frames (≈5.2 s) |
 | `seed` | as before |
-| `steps` | default 20 (the template's), 8 with `turbo` |
+| `steps` | default 20 (the template's), 8 with `turbo`. **The GUI sends 8**, which switches turbo on automatically |
 | `lora_pairs` | `[{high, high_weight, low, low_weight}]` — H3 is one model, so each pair contributes `high` (or `low` if `high` is empty) at its weight |
 | `negative_prompt`, `cfg`, `context_overlap` | accepted and ignored — the template samples with `BasicGuider`, which has no negative/CFG |
 | `prompt_expansion` | ignored with a warning; `expand_only` returns an error (that feature lives on the Wan build) |
@@ -51,7 +61,7 @@ Extra fields for clients that want them:
 | `duration` | seconds (wins over `length`) |
 | `frames` | H3 frames at 24 fps, snapped up to the model's 17k+5 grid |
 | `loras` | `[{"name": "file.safetensors", "strength": 0.8}]` — native form |
-| `turbo` | apply the 8-step turbo LoRA (default steps become 8) |
+| `turbo` | `"auto"` (default): on when `steps` ≤ 10, since plain H3 needs ~20 steps and the GUI's default of 8 would come back under-sampled; off if you already chose a turbo/lightning/distill LoRA. `true`/`false` force it. The reply's `turbo_reason` says which applied |
 | `audio` | `false` for a silent clip |
 | `model` | pick a diffusion model by filename (see `models_status`) |
 | `sampler`, `scheduler` | override `res_multistep` / `simple` |
