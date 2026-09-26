@@ -1,0 +1,34 @@
+# Models for the MiniMax-H3 build, fetched onto the Network Volume by
+# fetch_models.py on first start (never baked into the image).
+#
+#   <folder>  <url>  [if-no-dit]
+#
+# folder: diffusion_models | text_encoders | vae | loras | auto
+#         "auto" asks Civitai what the file is (LoRA, VAE, text encoder or a
+#         diffusion model) and files it accordingly.
+# if-no-dit: only fetched when no diffusion model ended up on the volume.
+#
+# Civitai links need CIVITAI_TOKEN (or CIVITAI_API_KEY) set on the endpoint.
+
+# --- supporting models from ComfyUI's MiniMax-H3 template (Comfy-Org repack) ---
+text_encoders  https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+vae            https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors
+vae            https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors
+# optional 8-step turbo LoRA the template offers ({"turbo": true})
+loras          https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors
+
+# --- models (Civitai) ---
+auto           https://civitai.red/api/download/models/3294059?fileId=3178732
+auto           https://civitai.red/api/download/models/3294059?fileId=3185154
+
+# --- LoRAs (Civitai) ---
+loras          https://civitai.red/api/download/models/3266628?fileId=3150341
+loras          https://civitai.red/api/download/models/3321019?fileId=3206654
+loras          https://civitai.red/api/download/models/3279596?fileId=3163747
+loras          https://civitai.red/api/download/models/3340638?fileId=3227618
+loras          https://civitai.red/api/download/models/3309568?fileId=3194784
+loras          https://civitai.red/api/download/models/3342542?fileId=3229287
+loras          https://civitai.red/api/download/models/3278283?fileId=3162350
+
+# --- ComfyUI's base DiT, only if none of the above turned out to be one ---
+diffusion_models  https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors  if-no-dit

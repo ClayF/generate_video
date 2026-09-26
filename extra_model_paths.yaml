@@ -1,9 +1,9 @@
 #config for comfyui
-#your base path should be either an existing comfy install or a central folder where you store all of your models, loras, etc.
+# Models live on the Network Volume under /runpod-volume/models/<folder>/,
+# which is where fetch_models.py puts them. The image's own folders stay first.
 
 comfyui:
     base_path: /ComfyUI/
-    # You can use is_default to mark that these folders should be listed first, and used as the default dirs for eg downloads
     is_default: true
     checkpoints: models/checkpoints/
     clip: models/clip/
@@ -13,13 +13,16 @@ comfyui:
     diffusion_models: |
         models/diffusion_models
         models/unet
-        /runpod-volume/models/
+        /runpod-volume/models/diffusion_models/
+    text_encoders: |
+        models/text_encoders/
+        /runpod-volume/models/text_encoders/
     embeddings: models/embeddings/
-    LLM: |
-        models/LLM/
-        /runpod-volume/LLM/
     loras: |
         models/loras/
+        /runpod-volume/models/loras/
         /runpod-volume/loras/
     upscale_models: models/upscale_models/
-    vae: models/vae/
+    vae: |
+        models/vae/
+        /runpod-volume/models/vae/

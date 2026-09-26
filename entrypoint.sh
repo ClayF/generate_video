@@ -1,90 +1,39 @@
 #!/bin/bash
-
-# Exit immediately if a command exits with a non-zero status.
+# generate_video — MiniMax-H3 build
 set -e
 
-# Optional: DashScope key for cloud Qwen prompt-expansion models. Local GGUF
-# models (the default) do not need it.
-MM_NODE_DIR=/ComfyUI/custom_nodes/ComfyUI-MultiModal-Prompt-Nodes
-if [ -n "$DASHSCOPE_API_KEY" ] && [ -d "$MM_NODE_DIR" ]; then
-    printf '%s' "$DASHSCOPE_API_KEY" > "$MM_NODE_DIR/api_key.txt"
-    echo "DashScope API key written for prompt expansion."
+# ---------------------------------------------------------------------------
+# Models: models_minimax.txt → the Network Volume (fetch_models.py).
+#   MODELS_DOWNLOAD=background   (default) start serving right away; jobs that
+#                                need a file still on its way say so
+#   MODELS_DOWNLOAD=foreground   finish every download before serving
+#   MODELS_DOWNLOAD=off          you manage the files yourself
+# Civitai files need CIVITAI_TOKEN (or CIVITAI_API_KEY) on the endpoint.
+# ---------------------------------------------------------------------------
+DL_LOG=/tmp/model-download.log
+MODE="${MODELS_DOWNLOAD:-background}"
+echo "=== entrypoint $(date -u +%Y-%m-%dT%H:%M:%SZ) build $(cat /build-commit 2>/dev/null || echo unknown) — MiniMax-H3 ===" | tee -a "$DL_LOG"
+if [ ! -d /runpod-volume ]; then
+    echo "WARNING: no Network Volume at /runpod-volume — MiniMax-H3 needs 50+ GB of models and" \
+         "they would be re-downloaded into the container disk on every cold start. Attach a volume." | tee -a "$DL_LOG"
 fi
-
-# ---------------------------------------------------------------------------
-# Prompt-expansion model: fetch once onto the Network Volume (or the image's
-# LLM folder when it was baked in / no volume is attached).
-#   PROMPT_LLM_URL / PROMPT_MMPROJ_URL   what to fetch (set in the Dockerfile,
-#                                        override on the endpoint to use another
-#                                        quant or Qwen family)
-#   PROMPT_LLM_AUTO_DOWNLOAD=0           skip entirely (e.g. cloud models only)
-# ---------------------------------------------------------------------------
-prompt_model_setup() {
-    if [ -f /usr/local/bin/mmproj-name ]; then
-        source /usr/local/bin/mmproj-name          # mmproj_name / mmproj_fix_dir
-    else
-        mmproj_name() { basename "${1%%\?*}"; }   # very old image: keep the source name
-        mmproj_fix_dir() { :; }
-    fi
-    # Heal projectors saved under their source name (e.g. by an earlier build):
-    # the node only sees mmproj-*.gguf.
-    mmproj_fix_dir /ComfyUI/models/LLM /runpod-volume/LLM
-
-    echo "=== entrypoint $(date -u +%Y-%m-%dT%H:%M:%SZ) build $(cat /build-commit 2>/dev/null || echo unknown) ==="
-    echo "PROMPT_LLM_URL=$PROMPT_LLM_URL"
-    echo "PROMPT_MMPROJ_URL=$PROMPT_MMPROJ_URL"
-    echo "PROMPT_LLM_AUTO_DOWNLOAD=${PROMPT_LLM_AUTO_DOWNLOAD:-1}  volume=$([ -d /runpod-volume ] && echo yes || echo no)"
-    LLM_FILE="$(basename "${PROMPT_LLM_URL%%\?*}")"
-    MMPROJ_FILE="$(mmproj_name "$PROMPT_MMPROJ_URL")"
-    llm_have() {  # is the configured model (and its projector) already present?
-        for d in /ComfyUI/models/LLM /runpod-volume/LLM; do
-            [ -n "$LLM_FILE" ] && [ -s "$d/$LLM_FILE" ] || continue
-            [ -z "$PROMPT_MMPROJ_URL" ] && return 0
-            [ -n "$MMPROJ_FILE" ] && [ -s "$d/$MMPROJ_FILE" ] && return 0
-        done
-        return 1
-    }
-    if [ "${PROMPT_LLM_AUTO_DOWNLOAD:-1}" != "0" ] && [ -n "$PROMPT_LLM_URL" ] && ! llm_have; then
-        if [ -d /runpod-volume ]; then
-            LLM_DEST=/runpod-volume/LLM
-        else
-            LLM_DEST=/ComfyUI/models/LLM
-            echo "WARNING: no Network Volume at /runpod-volume — the prompt-expansion model will be" \
-                 "downloaded into the container disk and lost when this worker stops. Attach a" \
-                 "Network Volume to the endpoint so it is fetched once, or build with" \
-                 "--build-arg BAKE_PROMPT_LLM=1."
-        fi
-        mkdir -p "$LLM_DEST"
-        for pair in "$PROMPT_LLM_URL|$LLM_FILE" "$PROMPT_MMPROJ_URL|$MMPROJ_FILE"; do
-            url="${pair%%|*}"; name="${pair#*|}"
-            [ -n "$url" ] && [ -n "$name" ] || continue
-            f="$LLM_DEST/$name"
-            [ -s "$f" ] && { echo "Present: $f"; continue; }
-            echo "Fetching prompt-expansion model: $url -> $f"
-            # hfget stages next to the destination and only moves the file into place
-            # when complete, so an interrupted start never leaves a truncated .gguf
-            # behind and the next start resumes the download.
-            if ! hfget "$url" "$f"; then
-                echo "WARNING: download failed for $url — prompt expansion will not work until it succeeds" \
-                     "(the worker still serves normal generations)."
-                break
-            fi
-        done
-    elif llm_have; then
-        echo "Prompt-expansion model present: $LLM_FILE"
-    fi
-    echo "LLM folder(s):"; ls -la /ComfyUI/models/LLM /runpod-volume/LLM 2>/dev/null | grep -i '\.gguf' || echo "  (no GGUF files)"
-}
-DL_LOG=/tmp/prompt-llm-download.log   # kept for {"diagnostics": true}
-prompt_model_setup 2>&1 | tee -a "$DL_LOG"
+if [ -z "${CIVITAI_TOKEN}${CIVITAI_API_TOKEN}${CIVITAI_API_KEY}${CIVITAI_KEY}" ]; then
+    echo "WARNING: no CIVITAI_TOKEN set — the Civitai models and LoRAs cannot be downloaded." | tee -a "$DL_LOG"
+fi
+case "$MODE" in
+    off)        echo "Model download disabled (MODELS_DOWNLOAD=off)." | tee -a "$DL_LOG" ;;
+    foreground) python -u /fetch_models.py 2>&1 | tee -a "$DL_LOG" || echo "Some downloads failed — see $DL_LOG" ;;
+    *)          echo "Fetching models in the background (log: $DL_LOG)"
+                nohup python -u /fetch_models.py >> "$DL_LOG" 2>&1 & ;;
+esac
 
 # Start ComfyUI in the background
 echo "Starting ComfyUI in the background..."
-python /ComfyUI/main.py --listen --use-sage-attention &
+python /ComfyUI/main.py --listen ${COMFY_ARGS:---use-sage-attention} &
 
 # Wait for ComfyUI to be ready
 echo "Waiting for ComfyUI to be ready..."
-max_wait=120  # 최대 2분 대기
+max_wait=180
 wait_count=0
 while [ $wait_count -lt $max_wait ]; do
     if curl -s http://127.0.0.1:8188/ > /dev/null 2>&1; then
@@ -95,13 +44,11 @@ while [ $wait_count -lt $max_wait ]; do
     sleep 2
     wait_count=$((wait_count + 2))
 done
-
 if [ $wait_count -ge $max_wait ]; then
     echo "Error: ComfyUI failed to start within $max_wait seconds"
     exit 1
 fi
 
 # Start the handler in the foreground
-# 이 스크립트가 컨테이너의 메인 프로세스가 됩니다.
 echo "Starting the handler..."
 exec python handler.py
